@@ -10,7 +10,7 @@ const corsHeaders = {
 
 function jsonResponse(
   body: Record<string, unknown>,
-  status = 200,
+  status = 200
 ) {
   return new Response(JSON.stringify(body), {
     status,
@@ -21,31 +21,48 @@ function jsonResponse(
   });
 }
 
-async function sha512(value: string) {
+async function sha512(value: string): Promise<string> {
   const data = new TextEncoder().encode(value);
 
   const hashBuffer = await crypto.subtle.digest(
     "SHA-512",
-    data,
+    data
   );
 
   return Array.from(new Uint8Array(hashBuffer))
     .map((byte) =>
-      byte.toString(16).padStart(2, "0"),
+      byte.toString(16).padStart(2, "0")
     )
     .join("");
 }
 
-function generateTransactionId(prefix: string) {
-  return `${prefix}${crypto.randomUUID()
+function generateTransactionId(
+  prefix: string
+): string {
+  const randomPart = crypto
+    .randomUUID()
     .replace(/-/g, "")
-    .substring(0, 23)}`;
+    .substring(0, 23);
+
+  return `${prefix}${randomPart}`.substring(0, 25);
+}
+
+function cleanName(value: unknown): string {
+  const name = String(value || "").trim();
+
+  if (!name) {
+    return "Student";
+  }
+
+  return name.substring(0, 60);
 }
 
 Deno.serve(async (req: Request) => {
-  // =====================================================
-  // CORS
-  // =====================================================
+  /*
+   * =========================================================
+   * CORS
+   * =========================================================
+   */
 
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -59,158 +76,119 @@ Deno.serve(async (req: Request) => {
       {
         error: "Method not allowed",
       },
-      405,
+      405
     );
   }
 
   try {
-    console.log(
-      "========== PAYU CREATE PAYMENT ==========",
-    );
-
-    // ===================================================
-    // ENVIRONMENT
-    // ===================================================
+    /*
+     * =========================================================
+     * ENVIRONMENT
+     * =========================================================
+     */
 
     const supabaseUrl =
       Deno.env.get("SUPABASE_URL");
 
-    const serviceRoleKey =
-      Deno.env.get(
-        "SUPABASE_SERVICE_ROLE_KEY",
+    const supabaseAnonKey =
+      Deno.env.get("SUPABASE_ANON_KEY");
+
+    const supabaseServiceRoleKey =
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+    if (
+      !supabaseUrl ||
+      !supabaseAnonKey ||
+      !supabaseServiceRoleKey
+    ) {
+      console.error(
+        "Missing Supabase environment variables"
       );
 
-    const anonKey =
-      Deno.env.get(
-        "SUPABASE_ANON_KEY",
-      );
-
-    if (!supabaseUrl) {
       return jsonResponse(
         {
           error:
-            "SUPABASE_URL is not configured",
+            "Server configuration error.",
         },
-        500,
+        500
       );
     }
 
-    if (!serviceRoleKey) {
+    /*
+     * =========================================================
+     * AUTHORIZATION
+     * =========================================================
+     */
+
+    const authorization =
+      req.headers.get("Authorization");
+
+    if (!authorization) {
       return jsonResponse(
         {
           error:
-            "SUPABASE_SERVICE_ROLE_KEY is not configured",
+            "Authorization header required.",
         },
-        500,
+        401
       );
     }
 
-    if (!anonKey) {
-      return jsonResponse(
-        {
-          error:
-            "SUPABASE_ANON_KEY is not configured",
-        },
-        500,
-      );
-    }
-
-    // ===================================================
-    // AUTHORIZATION
-    // ===================================================
-
-    const authHeader =
-      req.headers.get("Authorization") || "";
-
-    if (!authHeader) {
-      return jsonResponse(
-        {
-          error: "Unauthorized",
-        },
-        401,
-      );
-    }
-
-    const token =
-      authHeader
-        .replace(/^Bearer\s+/i, "")
-        .trim();
-
-    if (!token) {
-      return jsonResponse(
-        {
-          error:
-            "Authorization token missing",
-        },
-        401,
-      );
-    }
-
-    // ===================================================
-    // USER CLIENT
-    // ===================================================
-
+    /*
+     * User client
+     */
     const userClient = createClient(
       supabaseUrl,
-      anonKey,
+      supabaseAnonKey,
       {
         global: {
           headers: {
-            Authorization:
-              `Bearer ${token}`,
+            Authorization: authorization,
           },
         },
-      },
+      }
     );
 
-    // ===================================================
-    // SERVICE CLIENT
-    // ===================================================
-
-    const serviceClient = createClient(
+    /*
+     * Admin/service client
+     */
+    const supabaseAdmin = createClient(
       supabaseUrl,
-      serviceRoleKey,
+      supabaseServiceRoleKey
     );
 
-    // ===================================================
-    // VERIFY USER
-    // ===================================================
+    /*
+     * =========================================================
+     * VERIFY USER
+     * =========================================================
+     */
 
     const {
-      data: userData,
+      data: { user },
       error: userError,
-    } =
-      await userClient.auth.getUser();
+    } = await userClient.auth.getUser();
 
-    if (
-      userError ||
-      !userData?.user
-    ) {
+    if (userError || !user) {
       console.error(
-        "User verification failed:",
-        userError?.message,
+        "Auth error:",
+        userError
       );
 
       return jsonResponse(
         {
-          error: "Unauthorized",
+          error:
+            "Unauthorized. Please login again.",
         },
-        401,
+        401
       );
     }
 
-    const user = userData.user;
+    /*
+     * =========================================================
+     * REQUEST BODY
+     * =========================================================
+     */
 
-    console.log(
-      "Authenticated user:",
-      user.id,
-    );
-
-    // ===================================================
-    // REQUEST BODY
-    // ===================================================
-
-    let body: any;
+    let body: Record<string, unknown> = {};
 
     try {
       body = await req.json();
@@ -218,29 +196,35 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(
         {
           error:
-            "Invalid JSON request body",
+            "Invalid JSON request body.",
         },
-        400,
+        400
       );
     }
 
     const courseId =
-      body?.courseId || null;
+      typeof body?.courseId === "string"
+        ? body.courseId.trim()
+        : "";
 
     const mockTestId =
-      body?.mockTestId || null;
+      typeof body?.mockTestId === "string"
+        ? body.mockTestId.trim()
+        : "";
 
-    // ===================================================
-    // MUST PROVIDE ONE PAYMENT TYPE
-    // ===================================================
+    /*
+     * =========================================================
+     * VALIDATE PAYMENT TYPE
+     * =========================================================
+     */
 
     if (!courseId && !mockTestId) {
       return jsonResponse(
         {
           error:
-            "courseId or mockTestId is required",
+            "courseId or mockTestId is required.",
         },
-        400,
+        400
       );
     }
 
@@ -248,331 +232,345 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(
         {
           error:
-            "Send either courseId or mockTestId, not both",
+            "Send either courseId or mockTestId, not both.",
         },
-        400,
+        400
       );
     }
 
-    const isMockTestPayment =
-      Boolean(mockTestId);
-
-    console.log(
-      "Payment type:",
-      isMockTestPayment
-        ? "MOCK_TEST"
-        : "COURSE",
-    );
-
-    // ===================================================
-    // GET PAYMENT SETTINGS
-    // ===================================================
+    /*
+     * =========================================================
+     * PAYMENT SETTINGS
+     * =========================================================
+     */
 
     const {
-      data: settings,
-      error: settingsError,
-    } =
-      await serviceClient
-        .from("payment_settings")
-        .select(
-          "merchant_key, merchant_salt, test_mode",
-        )
-        .eq("id", 1)
-        .maybeSingle();
+      data: paymentSettings,
+      error: paymentSettingsError,
+    } = await supabaseAdmin
+      .from("payment_settings")
+      .select(
+        "id, merchant_key, merchant_salt, test_mode"
+      )
+      .eq("id", 1)
+      .maybeSingle();
 
-    if (settingsError) {
+    if (paymentSettingsError) {
       console.error(
         "Payment settings error:",
-        settingsError,
+        paymentSettingsError
       );
 
       return jsonResponse(
         {
           error:
-            "Could not load payment gateway settings",
+            "Could not load payment settings.",
+          details:
+            paymentSettingsError.message,
         },
-        500,
+        500
       );
     }
 
-    if (!settings) {
+    if (
+      !paymentSettings?.merchant_key ||
+      !paymentSettings?.merchant_salt
+    ) {
       return jsonResponse(
         {
           error:
-            "Payment gateway is not configured",
+            "PayU merchant key/salt is not configured.",
         },
-        500,
+        500
       );
     }
 
-    if (!settings.merchant_key) {
-      return jsonResponse(
-        {
-          error:
-            "PayU merchant key is missing",
-        },
-        500,
-      );
-    }
+    const merchantKey = String(
+      paymentSettings.merchant_key
+    ).trim();
 
-    if (!settings.merchant_salt) {
-      return jsonResponse(
-        {
-          error:
-            "PayU merchant salt is missing",
-        },
-        500,
-      );
-    }
+    const merchantSalt = String(
+      paymentSettings.merchant_salt
+    ).trim();
 
-    const merchantKey =
-      String(
-        settings.merchant_key,
-      ).trim();
+    const isTest = Boolean(
+      paymentSettings.test_mode
+    );
 
-    const merchantSalt =
-      String(
-        settings.merchant_salt,
-      ).trim();
-
-    const isTest =
-      Boolean(settings.test_mode);
-
-    // ===================================================
-    // GET STUDENT PROFILE
-    // ===================================================
+    /*
+     * =========================================================
+     * USER PROFILE
+     * =========================================================
+     */
 
     const {
       data: profile,
       error: profileError,
-    } =
-      await serviceClient
-        .from("profiles")
-        .select(
-          "full_name, email",
-        )
-        .eq("id", user.id)
-        .maybeSingle();
+    } = await supabaseAdmin
+      .from("profiles")
+      .select("full_name, email")
+      .eq("id", user.id)
+      .maybeSingle();
 
     if (profileError) {
-      console.error(
-        "Profile error:",
-        profileError,
+      console.warn(
+        "Profile fetch warning:",
+        profileError
       );
     }
 
-    // ===================================================
-    // COMMON CUSTOMER DATA
-    // ===================================================
+    const firstname = cleanName(
+      profile?.full_name ||
+        user.user_metadata?.full_name ||
+        user.user_metadata?.name ||
+        "Student"
+    );
 
-    const fullName =
-      String(
-        profile?.full_name ||
-          user.user_metadata?.full_name ||
-          "Student",
-      ).trim();
-
-    const firstname =
-      fullName
-        .split(/\s+/)[0]
-        .substring(0, 60) ||
-      "Student";
-
-    const email =
-      String(
-        profile?.email ||
-          user.email ||
-          "",
-      ).trim();
-
-    const phone =
-      String(
-        user.user_metadata?.phone ||
-          user.user_metadata?.mobile ||
-          "",
-      ).trim();
+    const email = String(
+      profile?.email ||
+        user.email ||
+        ""
+    ).trim();
 
     if (!email) {
       return jsonResponse(
         {
           error:
-            "Student email is required for payment",
+            "Student email is required for payment.",
         },
-        400,
+        400
       );
     }
 
-    // ===================================================
-    // PAYMENT VARIABLES
-    // ===================================================
+    const phone = String(
+      user.user_metadata?.phone ||
+        ""
+    ).trim();
 
-    let productinfo = "";
-    let amount = "";
+    /*
+     * =========================================================
+     * PAYU CALLBACK
+     * =========================================================
+     *
+     * PayU will POST the payment response here.
+     */
+
+    const webhookUrl =
+      `${supabaseUrl}/functions/v1/payu-webhook`;
+
+    /*
+     * =========================================================
+     * PAYU PAYMENT URL
+     * =========================================================
+     *
+     * IMPORTANT:
+     * Do NOT put Markdown links here.
+     */
+
+    const payuUrl = isTest
+      ? "https://test.payu.in/_payment"
+      : "https://secure.payu.in/_payment";
+
+    /*
+     * =========================================================
+     * COMMON PAYMENT VARIABLES
+     * =========================================================
+     */
+
     let txnid = "";
+    let amount = "";
+    let productinfo = "";
 
-    // UDF values
     let udf1 = "";
     let udf2 = "";
     let udf3 = "";
     let udf4 = "";
     let udf5 = "";
 
-    // ===================================================
-    // COURSE PAYMENT
-    // ===================================================
+    let paymentType = "";
+
+    /*
+     * =========================================================
+     * COURSE PAYMENT
+     * =========================================================
+     */
 
     if (courseId) {
-      console.log(
-        "Course ID:",
-        courseId,
+      paymentType = "course";
+
+      /*
+       * Existing course payment RPC.
+       */
+      const {
+        data: transaction,
+        error: transactionError,
+      } = await userClient.rpc(
+        "create_payment_transaction",
+        {
+          p_course_id: courseId,
+        }
       );
 
-      const {
-        data: txnData,
-        error: txnError,
-      } =
-        await userClient.rpc(
-          "create_payment_transaction",
-          {
-            p_course_id: courseId,
-          },
-        );
-
-      if (txnError) {
+      if (transactionError) {
         console.error(
-          "create_payment_transaction error:",
-          txnError,
+          "Course transaction RPC error:",
+          transactionError
         );
 
         return jsonResponse(
           {
             error:
-              txnError.message ||
-              "Could not create payment transaction",
+              transactionError.message ||
+              "Could not create payment transaction.",
+            code:
+              transactionError.code,
+            details:
+              transactionError.details,
+            hint:
+              transactionError.hint,
           },
-          400,
+          400
         );
       }
 
-      console.log(
-        "Raw course transaction data:",
-        txnData,
-      );
-
-      const txn =
-        Array.isArray(txnData)
-          ? txnData[0]
-          : txnData;
-
-      if (!txn) {
+      if (!transaction) {
         return jsonResponse(
           {
             error:
-              "Payment transaction was not created",
+              "Payment transaction was not created.",
           },
-          500,
+          400
         );
       }
 
       console.log(
         "Course transaction:",
-        txn,
+        transaction
       );
 
-      productinfo =
-        String(
-          txn.course_title ||
-            txn.title ||
-            "Course Enrollment",
-        ).trim();
+      /*
+       * RPC may return object or array.
+       */
+      const txn =
+        Array.isArray(transaction)
+          ? transaction[0]
+          : transaction;
 
-      const amountNumber =
-        Number(txn.amount);
-
-      if (
-        !Number.isFinite(
-          amountNumber,
-        ) ||
-        amountNumber <= 0
-      ) {
+      if (!txn) {
         return jsonResponse(
           {
             error:
-              "Invalid payment amount",
+              "Invalid transaction response.",
           },
-          400,
-        );
-      }
-
-      amount =
-        amountNumber.toFixed(2);
-
-      txnid =
-        String(
-          txn.txnid ||
-            txn.transaction_id ||
-            "",
-        ).trim();
-
-      if (!txnid) {
-        return jsonResponse(
-          {
-            error:
-              "Transaction ID was not generated",
-          },
-          500,
+          500
         );
       }
 
       /*
-       * Course payment UDF.
+       * Amount
+       */
+      amount = Number(
+        txn.amount
+      ).toFixed(2);
+
+      /*
+       * Transaction ID
+       */
+      txnid = String(
+        txn.txnid ||
+          txn.transaction_id ||
+          ""
+      ).trim();
+
+      /*
+       * Product information
+       */
+      productinfo = String(
+        txn.course_title ||
+          txn.title ||
+          "Course Payment"
+      ).trim();
+
+      /*
+       * Validate transaction
+       */
+      if (!txnid) {
+        return jsonResponse(
+          {
+            error:
+              "Transaction ID was not generated.",
+          },
+          500
+        );
+      }
+
+      if (
+        !amount ||
+        Number(amount) <= 0
+      ) {
+        return jsonResponse(
+          {
+            error:
+              "Invalid payment amount.",
+          },
+          400
+        );
+      }
+
+      /*
+       * UDF values
        *
-       * Existing course payment continues
-       * to work normally.
+       * udf1 = course ID
+       * udf2 = student ID
+       * udf3 = payment type
        */
       udf1 = courseId;
       udf2 = user.id;
       udf3 = "course";
     }
 
-    // ===================================================
-    // MOCK TEST PAYMENT
-    // ===================================================
+    /*
+     * =========================================================
+     * MOCK TEST PAYMENT
+     * =========================================================
+     */
 
     if (mockTestId) {
-      console.log(
-        "Mock Test ID:",
-        mockTestId,
-      );
+      paymentType = "mock_test";
 
-      // -----------------------------------------------
-      // GET MOCK TEST
-      // -----------------------------------------------
+      /*
+       * -------------------------------------------------------
+       * LOAD MOCK TEST
+       * -------------------------------------------------------
+       */
 
       const {
         data: mockTest,
         error: mockTestError,
-      } =
-        await serviceClient
-          .from("mock_tests")
-          .select(
-            "id, title, price, is_free, status",
-          )
-          .eq("id", mockTestId)
-          .maybeSingle();
+      } = await supabaseAdmin
+        .from("mock_tests")
+        .select(
+          "id, title, price, is_free, status"
+        )
+        .eq("id", mockTestId)
+        .maybeSingle();
 
       if (mockTestError) {
         console.error(
           "Mock test fetch error:",
-          mockTestError,
+          mockTestError
         );
 
         return jsonResponse(
           {
             error:
-              "Could not load mock test",
+              "Could not load mock test.",
+            details:
+              mockTestError.message,
+            code:
+              mockTestError.code,
           },
-          500,
+          500
         );
       }
 
@@ -580,11 +578,17 @@ Deno.serve(async (req: Request) => {
         return jsonResponse(
           {
             error:
-              "Mock test not found",
+              "Mock test not found.",
           },
-          404,
+          404
         );
       }
+
+      /*
+       * -------------------------------------------------------
+       * TEST STATUS
+       * -------------------------------------------------------
+       */
 
       if (
         mockTest.status !==
@@ -593,215 +597,345 @@ Deno.serve(async (req: Request) => {
         return jsonResponse(
           {
             error:
-              "This mock test is not available",
+              "This mock test is not available for purchase.",
           },
-          400,
+          400
         );
       }
+
+      /*
+       * -------------------------------------------------------
+       * FREE TEST
+       * -------------------------------------------------------
+       */
 
       if (mockTest.is_free) {
         return jsonResponse(
           {
             error:
-              "This mock test is free",
+              "This mock test is free.",
           },
-          400,
+          400
         );
       }
 
-      // -----------------------------------------------
-      // PRICE
-      // -----------------------------------------------
+      /*
+       * -------------------------------------------------------
+       * PRICE
+       * -------------------------------------------------------
+       */
 
-      const mockTestAmount =
-        Number(mockTest.price);
+      const mockPrice = Number(
+        mockTest.price
+      );
 
       if (
-        !Number.isFinite(
-          mockTestAmount,
-        ) ||
-        mockTestAmount <= 0
+        !Number.isFinite(mockPrice) ||
+        mockPrice <= 0
       ) {
         return jsonResponse(
           {
             error:
-              "Invalid mock test price",
+              "Invalid mock test price.",
           },
-          400,
+          400
         );
       }
 
+      /*
+       * -------------------------------------------------------
+       * CHECK EXISTING PURCHASE
+       * -------------------------------------------------------
+       *
+       * IMPORTANT:
+       *
+       * mock_test_purchases has:
+       *
+       * UNIQUE(student_id, test_id)
+       *
+       * Therefore we MUST NOT only check "success"
+       * and then blindly INSERT.
+       */
+
+      const {
+        data: existingPurchase,
+        error: purchaseCheckError,
+      } = await supabaseAdmin
+        .from("mock_test_purchases")
+        .select(
+          `
+          id,
+          payment_status,
+          amount,
+          payment_transaction_id
+          `
+        )
+        .eq(
+          "test_id",
+          mockTestId
+        )
+        .eq(
+          "student_id",
+          user.id
+        )
+        .maybeSingle();
+
+      if (purchaseCheckError) {
+        console.error(
+          "Existing purchase check error:",
+          purchaseCheckError
+        );
+
+        return jsonResponse(
+          {
+            error:
+              "Could not check existing payment record.",
+            details:
+              purchaseCheckError.message,
+            code:
+              purchaseCheckError.code,
+            hint:
+              purchaseCheckError.hint,
+          },
+          500
+        );
+      }
+
+      /*
+       * -------------------------------------------------------
+       * ALREADY SUCCESSFUL
+       * -------------------------------------------------------
+       */
+
+      if (
+        existingPurchase &&
+        existingPurchase.payment_status ===
+          "success"
+      ) {
+        return jsonResponse(
+          {
+            error:
+              "You have already purchased this mock test.",
+          },
+          400
+        );
+      }
+
+      /*
+       * -------------------------------------------------------
+       * GENERATE PAYU TRANSACTION
+       * -------------------------------------------------------
+       */
+
+      txnid =
+        generateTransactionId("MT");
+
       amount =
-        mockTestAmount.toFixed(2);
+        mockPrice.toFixed(2);
 
       productinfo =
         String(
           mockTest.title ||
-            "Mock Test",
+            "Mock Test"
         ).trim();
 
-      // -----------------------------------------------
-      // CHECK EXISTING SUCCESS PURCHASE
-      // -----------------------------------------------
-
-      const {
-        data: existingPurchase,
-        error:
-          existingPurchaseError,
-      } =
-        await serviceClient
-          .from(
-            "mock_test_purchases",
-          )
-          .select(
-            "id, payment_status",
-          )
-          .eq(
-            "test_id",
-            mockTestId,
-          )
-          .eq(
-            "student_id",
-            user.id,
-          )
-          .eq(
-            "payment_status",
-            "success",
-          )
-          .maybeSingle();
-
-      if (
-        existingPurchaseError
-      ) {
-        console.error(
-          "Existing purchase check error:",
-          existingPurchaseError,
-        );
-      }
-
-      if (existingPurchase) {
-        return jsonResponse(
-          {
-            error:
-              "You have already purchased this mock test",
-          },
-          400,
-        );
-      }
-
-      // -----------------------------------------------
-      // CREATE UNIQUE PAYU TRANSACTION ID
-      // -----------------------------------------------
-
-      txnid =
-        generateTransactionId(
-          "MT",
-        );
-
-      if (txnid.length > 25) {
-        txnid =
-          txnid.substring(0, 25);
-      }
-
       /*
-       * IMPORTANT:
+       * -------------------------------------------------------
+       * UDF VALUES
+       * -------------------------------------------------------
        *
-       * UDF1 = Mock Test ID
-       * UDF2 = Student ID
-       * UDF3 = Payment Type
-       *
-       * PayU sends these values back to webhook.
+       * udf1 = mock test ID
+       * udf2 = student ID
+       * udf3 = mock_test
        */
+
       udf1 = mockTestId;
       udf2 = user.id;
       udf3 = "mock_test";
 
-      // -----------------------------------------------
-      // CREATE PENDING PURCHASE
-      // -----------------------------------------------
+      /*
+       * -------------------------------------------------------
+       * EXISTING PENDING / FAILED / CANCELLED RECORD
+       * -------------------------------------------------------
+       *
+       * Reuse it because of:
+       *
+       * UNIQUE(student_id, test_id)
+       */
 
-      const {
-        error: pendingPurchaseError,
-      } =
-        await serviceClient
+      if (existingPurchase) {
+        console.log(
+          "Existing mock purchase found:",
+          {
+            id:
+              existingPurchase.id,
+            oldStatus:
+              existingPurchase.payment_status,
+          }
+        );
+
+        const {
+          error:
+            updatePurchaseError,
+        } = await supabaseAdmin
           .from(
-            "mock_test_purchases",
+            "mock_test_purchases"
+          )
+          .update({
+            amount:
+              mockPrice,
+
+            payment_status:
+              "pending",
+
+            payment_transaction_id:
+              null,
+
+            paid_at:
+              null,
+
+            updated_at:
+              new Date().toISOString(),
+          })
+          .eq(
+            "id",
+            existingPurchase.id
+          );
+
+        if (updatePurchaseError) {
+          console.error(
+            "Mock purchase update error:",
+            updatePurchaseError
+          );
+
+          return jsonResponse(
+            {
+              error:
+                "Could not reset payment record.",
+              details:
+                updatePurchaseError.message,
+              code:
+                updatePurchaseError.code,
+              hint:
+                updatePurchaseError.hint,
+            },
+            500
+          );
+        }
+
+        console.log(
+          "Mock purchase reset to pending:",
+          existingPurchase.id
+        );
+      } else {
+        /*
+         * -----------------------------------------------------
+         * CREATE NEW PURCHASE RECORD
+         * -----------------------------------------------------
+         */
+
+        const {
+          error:
+            pendingPurchaseError,
+        } = await supabaseAdmin
+          .from(
+            "mock_test_purchases"
           )
           .insert({
-            test_id: mockTestId,
-            student_id: user.id,
-            payment_status: "pending",
+            test_id:
+              mockTestId,
+
+            student_id:
+              user.id,
+
+            amount:
+              mockPrice,
+
+            payment_status:
+              "pending",
           });
 
-      if (
-        pendingPurchaseError
-      ) {
-        console.error(
-          "Pending mock test purchase error:",
-          pendingPurchaseError,
-        );
+        if (pendingPurchaseError) {
+          console.error(
+            "Pending mock purchase insert error:",
+            pendingPurchaseError
+          );
 
-        return jsonResponse(
+          return jsonResponse(
+            {
+              error:
+                "Could not create payment record.",
+              details:
+                pendingPurchaseError.message,
+              code:
+                pendingPurchaseError.code,
+              hint:
+                pendingPurchaseError.hint,
+            },
+            500
+          );
+        }
+
+        console.log(
+          "New mock purchase created:",
           {
-            error:
-              "Could not create mock test payment record",
-            details:
-              pendingPurchaseError.message,
-          },
-          500,
+            testId:
+              mockTestId,
+            studentId:
+              user.id,
+            amount:
+              mockPrice,
+          }
         );
       }
-
-      console.log(
-        "Pending mock test purchase created",
-        {
-          testId: mockTestId,
-          studentId: user.id,
-          txnid,
-        },
-      );
     }
 
-    // ===================================================
-    // VALIDATE TRANSACTION ID
-    // ===================================================
+    /*
+     * =========================================================
+     * FINAL VALIDATION
+     * =========================================================
+     */
 
     if (!txnid) {
       return jsonResponse(
         {
           error:
-            "Transaction ID is missing",
+            "Transaction ID is missing.",
         },
-        500,
+        500
       );
     }
 
-    if (txnid.length > 25) {
+    if (!amount) {
       return jsonResponse(
         {
           error:
-            "Transaction ID is too long",
+            "Payment amount is missing.",
         },
-        500,
+        500
       );
     }
 
-    // ===================================================
-    // PAYU CALLBACK
-    // ===================================================
+    if (!productinfo) {
+      return jsonResponse(
+        {
+          error:
+            "Product information is missing.",
+        },
+        500
+      );
+    }
 
-    const callbackUrl =
-      `${supabaseUrl}/functions/v1/payu-webhook`;
-
-    // ===================================================
-    // PAYU HASH
-    //
-    // Standard hosted checkout:
-    //
-    // key|txnid|amount|productinfo|firstname|email|
-    // udf1|udf2|udf3|udf4|udf5||||||SALT
-    //
-    // ===================================================
+    /*
+     * =========================================================
+     * PAYU REQUEST HASH
+     * =========================================================
+     *
+     * PayU Hosted Checkout:
+     *
+     * key|txnid|amount|productinfo|firstname|email|
+     * udf1|udf2|udf3|udf4|udf5||||||SALT
+     */
 
     const hashString = [
       merchantKey,
@@ -826,101 +960,109 @@ Deno.serve(async (req: Request) => {
     console.log(
       "Generating PayU hash:",
       {
+        paymentType,
         txnid,
         amount,
         productinfo,
-        paymentType:
-          isMockTestPayment
-            ? "mock_test"
-            : "course",
-      },
+        udf1,
+        udf2,
+        udf3,
+      }
     );
 
     const hash =
       await sha512(
-        hashString,
+        hashString
       );
 
-    // ===================================================
-    // PAYU URL
-    // ===================================================
-
-    const payuUrl =
-      isTest
-        ? "https://test.payu.in/_payment"
-        : "https://secure.payu.in/_payment";
-
-    // ===================================================
-    // FINAL RESPONSE
-    // ===================================================
-
-    const responseData = {
-      txnid,
-      amount,
-      productinfo,
-      firstname,
-      email,
-
-      key: merchantKey,
-
-      hash,
-
-      payu_url: payuUrl,
-
-      surl: callbackUrl,
-      curl: callbackUrl,
-      furl: callbackUrl,
-
-      phone,
-
-      udf1,
-      udf2,
-      udf3,
-      udf4,
-      udf5,
-
-      test_mode: isTest,
-
-      payment_type:
-        isMockTestPayment
-          ? "mock_test"
-          : "course",
-    };
-
-    console.log(
-      "PayU payment initialized successfully:",
-      {
-        txnid,
-        amount,
-        productinfo,
-        paymentType:
-          isMockTestPayment
-            ? "mock_test"
-            : "course",
-        payuUrl,
-        testMode: isTest,
-      },
-    );
+    /*
+     * =========================================================
+     * RETURN PAYU DATA
+     * =========================================================
+     */
 
     return jsonResponse(
-      responseData,
-      200,
+      {
+        success: true,
+
+        payment_type:
+          paymentType,
+
+        key:
+          merchantKey,
+
+        txnid,
+
+        amount,
+
+        productinfo,
+
+        firstname,
+
+        email,
+
+        phone,
+
+        hash,
+
+        /*
+         * PayU will POST payment response
+         * to this callback.
+         */
+        surl:
+          webhookUrl,
+
+        furl:
+          webhookUrl,
+
+        curl:
+          webhookUrl,
+
+        /*
+         * UDF values are returned to frontend
+         * so frontend can send them to PayU.
+         */
+        udf1,
+
+        udf2,
+
+        udf3,
+
+        udf4,
+
+        udf5,
+
+        /*
+         * IMPORTANT:
+         * These are real URLs, NOT Markdown.
+         */
+        payu_url:
+          payuUrl,
+
+        test_mode:
+          isTest,
+      },
+      200
     );
   } catch (error) {
     console.error(
-      "========== PAYU PAYMENT ERROR ==========",
+      "payu-create-payment fatal error:",
+      error
     );
-
-    console.error(error);
 
     return jsonResponse(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Payment initialization failed",
+            : "Internal server error.",
+
+        details:
+          error instanceof Error
+            ? error.stack || ""
+            : "",
       },
-      500,
+      500
     );
   }
 });
