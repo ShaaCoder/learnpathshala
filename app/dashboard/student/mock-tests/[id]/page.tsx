@@ -184,16 +184,14 @@ export default function MockTestTakePage({
         'Payment successful! Your mock test is now unlocked.'
       );
 
+      /*
+       * Remove query string from browser.
+       */
       window.history.replaceState(
         {},
         '',
         window.location.pathname
       );
-
-      /*
-       * fetchTest() is already triggered by the
-       * searchParams dependency below.
-       */
     }
 
     if (paymentStatus === 'failed') {
@@ -233,20 +231,12 @@ export default function MockTestTakePage({
       return;
     }
 
-    /*
-     * When ?retake=1 is removed with router.replace(),
-     * searchParams changes again.
-     *
-     * Skip that second fetch.
-     */
     if (skipNextFetchRef.current) {
       skipNextFetchRef.current = false;
       return;
     }
 
     fetchTest();
-
-    // searchParams intentionally included.
   }, [
     profile,
     user,
@@ -388,17 +378,54 @@ export default function MockTestTakePage({
       setPurchaseLoading(true);
 
       try {
-        /*
-         * Get current Supabase session.
-         */
+        /* =================================================
+           CHECK IF ALREADY PURCHASED
+        ================================================= */
+
+        const alreadyPurchased =
+          await checkMockTestPurchase(
+            test.id
+          );
+
+        if (alreadyPurchased) {
+          toast.success(
+            'You already have access to this mock test.'
+          );
+
+          setHasPurchased(true);
+
+          setPurchaseLoading(false);
+
+          return;
+        }
+
+        /* =================================================
+           GET SESSION
+        ================================================= */
+
         const {
           data: sessionData,
+          error: sessionError,
         } =
           await supabase.auth.getSession();
 
+        if (sessionError) {
+          console.error(
+            'Session error:',
+            sessionError
+          );
+
+          toast.error(
+            'Could not verify your session.'
+          );
+
+          setPurchaseLoading(false);
+
+          return;
+        }
+
         const token =
-          sessionData.session
-            ?.access_token;
+          sessionData.session?.access_token;
 
         if (!token) {
           toast.error(
@@ -410,20 +437,31 @@ export default function MockTestTakePage({
           return;
         }
 
-        /*
-         * Call existing PayU Edge Function.
-         *
-         * IMPORTANT:
-         *
-         * Your Edge Function must support:
-         *
-         * {
-         *   mockTestId: test.id
-         * }
-         */
+        /* =================================================
+           SUPABASE URL
+        ================================================= */
+
+        const supabaseUrl =
+          process.env
+            .NEXT_PUBLIC_SUPABASE_URL;
+
+        if (!supabaseUrl) {
+          toast.error(
+            'Supabase URL is not configured.'
+          );
+
+          setPurchaseLoading(false);
+
+          return;
+        }
+
+        /* =================================================
+           CALL PAYU CREATE PAYMENT
+        ================================================= */
+
         const res =
           await fetch(
-            `${process.env.NEXT_PUBLIC_SUPABASE_URL!}/functions/v1/payu-create-payment`,
+            `${supabaseUrl}/functions/v1/payu-create-payment`,
             {
               method: 'POST',
 
@@ -442,16 +480,25 @@ export default function MockTestTakePage({
             }
           );
 
-        if (!res.ok) {
-          const errorData =
-            await res
-              .json()
-              .catch(
-                () => null
-              );
+        /* =================================================
+           READ RESPONSE
+        ================================================= */
 
+        const payData =
+          await res
+            .json()
+            .catch(
+              () => null
+            );
+
+        console.log(
+          'PayU response:',
+          payData
+        );
+
+        if (!res.ok) {
           toast.error(
-            errorData?.error ||
+            payData?.error ||
               'Could not start payment. Please try again.'
           );
 
@@ -460,10 +507,7 @@ export default function MockTestTakePage({
           return;
         }
 
-        const payData =
-          await res.json();
-
-        if (payData.error) {
+        if (payData?.error) {
           toast.error(
             payData.error
           );
@@ -473,14 +517,21 @@ export default function MockTestTakePage({
           return;
         }
 
-        /*
-         * Validate important PayU fields.
-         */
+        /* =================================================
+           VALIDATE PAYU DATA
+        ================================================= */
+
         if (
-          !payData.payu_url ||
-          !payData.key ||
-          !payData.txnid ||
-          !payData.hash
+          !payData?.payu_url ||
+          !payData?.key ||
+          !payData?.txnid ||
+          !payData?.amount ||
+          !payData?.productinfo ||
+          !payData?.firstname ||
+          !payData?.email ||
+          !payData?.hash ||
+          !payData?.surl ||
+          !payData?.furl
         ) {
           console.error(
             'Invalid PayU response:',
@@ -496,25 +547,30 @@ export default function MockTestTakePage({
           return;
         }
 
-        /*
-         * Create PayU form.
-         */
+        /* =================================================
+           CREATE PAYU FORM
+        ================================================= */
+
         const form =
           document.createElement(
             'form'
           );
 
-        form.method = 'POST';
+        form.method =
+          'POST';
 
         form.action =
-          payData.payu_url;
+          String(
+            payData.payu_url
+          );
 
         form.style.display =
           'none';
 
-        /*
-         * PayU fields.
-         */
+        /* =================================================
+           PAYU FIELDS
+        ================================================= */
+
         const fields: Record<
           string,
           string
@@ -536,22 +592,17 @@ export default function MockTestTakePage({
 
           productinfo:
             String(
-              payData.productinfo ||
-                test.title
+              payData.productinfo
             ),
 
           firstname:
             String(
-              payData.firstname ||
-                profile?.full_name ||
-                'Student'
+              payData.firstname
             ),
 
           email:
             String(
-              payData.email ||
-                user.email ||
-                ''
+              payData.email
             ),
 
           phone:
@@ -565,9 +616,16 @@ export default function MockTestTakePage({
               payData.surl
             ),
 
+          furl:
+            String(
+              payData.furl
+            ),
+
           curl:
             String(
-              payData.curl
+              payData.curl ||
+                payData.furl ||
+                payData.surl
             ),
 
           hash:
@@ -575,57 +633,86 @@ export default function MockTestTakePage({
               payData.hash
             ),
 
-          udf1: '',
-          udf2: '',
-          udf3: '',
-          udf4: '',
-          udf5: '',
-          udf6: '',
-          udf7: '',
-          udf8: '',
-          udf9: '',
-          udf10: '',
+          /*
+           * IMPORTANT
+           *
+           * These must NOT be empty.
+           *
+           * Backend sends:
+           *
+           * udf1 = mockTestId
+           * udf2 = studentId
+           * udf3 = mock_test
+           */
+
+          udf1:
+            String(
+              payData.udf1 ||
+                ''
+            ),
+
+          udf2:
+            String(
+              payData.udf2 ||
+                ''
+            ),
+
+          udf3:
+            String(
+              payData.udf3 ||
+                ''
+            ),
+
+          udf4:
+            String(
+              payData.udf4 ||
+                ''
+            ),
+
+          udf5:
+            String(
+              payData.udf5 ||
+                ''
+            ),
         };
 
-        /*
-         * Append hidden inputs.
-         */
-        for (
-          const [
-            name,
-            value,
-          ] of Object.entries(
-            fields
-          )
-        ) {
-          const input =
-            document.createElement(
-              'input'
+        /* =================================================
+           APPEND HIDDEN INPUTS
+        ================================================= */
+
+        Object.entries(
+          fields
+        ).forEach(
+          ([name, value]) => {
+            const input =
+              document.createElement(
+                'input'
+              );
+
+            input.type =
+              'hidden';
+
+            input.name =
+              name;
+
+            input.value =
+              value;
+
+            form.appendChild(
+              input
             );
+          }
+        );
 
-          input.type =
-            'hidden';
+        /* =================================================
+           SUBMIT TO PAYU
+        ================================================= */
 
-          input.name =
-            name;
-
-          input.value =
-            value;
-
-          form.appendChild(
-            input
-          );
-        }
-
-        /*
-         * Submit to PayU.
-         */
         document.body.appendChild(
           form
         );
 
         form.submit();
-
       } catch (error) {
         console.error(
           'Mock test payment error:',
@@ -633,7 +720,9 @@ export default function MockTestTakePage({
         );
 
         toast.error(
-          'Could not connect to payment gateway.'
+          error instanceof Error
+            ? error.message
+            : 'Could not connect to payment gateway.'
         );
 
         setPurchaseLoading(false);
@@ -652,11 +741,9 @@ export default function MockTestTakePage({
         const { id } =
           await params;
 
-        /*
-         * ===================================================
-         * CHECK RETAKE
-         * ===================================================
-         */
+        /* ===================================================
+           CHECK RETAKE
+        =================================================== */
 
         const isRetake =
           searchParams.get(
@@ -671,11 +758,9 @@ export default function MockTestTakePage({
           }
         );
 
-        /*
-         * ===================================================
-         * LOAD TEST
-         * ===================================================
-         */
+        /* ===================================================
+           LOAD TEST
+        =================================================== */
 
         const {
           data: testData,
@@ -725,27 +810,17 @@ export default function MockTestTakePage({
         const currentTest =
           testData as MockTest;
 
-        /*
-         * ===================================================
-         * SET TEST
-         * ===================================================
-         */
+        /* ===================================================
+           SET TEST
+        =================================================== */
 
         setTest(
           currentTest
         );
 
-        /*
-         * ===================================================
-         * PAYMENT / ACCESS CHECK
-         * ===================================================
-         *
-         * FREE TEST:
-         *     access allowed.
-         *
-         * PAID TEST:
-         *     check mock_test_purchases.
-         */
+        /* ===================================================
+           PAYMENT / ACCESS CHECK
+        =================================================== */
 
         if (
           currentTest.is_free
@@ -764,10 +839,8 @@ export default function MockTestTakePage({
           );
 
           /*
-           * IMPORTANT:
-           *
-           * Do NOT load questions
-           * for an unpaid test.
+           * Do not load questions until payment
+           * is successful.
            */
           if (!purchased) {
             setQuestions([]);
@@ -790,11 +863,9 @@ export default function MockTestTakePage({
           }
         }
 
-        /*
-         * ===================================================
-         * LOAD QUESTIONS
-         * ===================================================
-         */
+        /* ===================================================
+           LOAD QUESTIONS
+        =================================================== */
 
         const {
           data: qData,
@@ -839,76 +910,42 @@ export default function MockTestTakePage({
           (qData ||
             []) as Question[];
 
-        /*
-         * ===================================================
-         * SET QUESTIONS
-         * ===================================================
-         */
-
         setQuestions(
           loadedQuestions
         );
 
-        /*
-         * ===================================================
-         * RETAKE MODE
-         * ===================================================
-         */
+        /* ===================================================
+           RETAKE MODE
+        =================================================== */
 
         if (isRetake) {
           console.log(
             'Starting NEW RETAKE'
           );
 
-          /*
-           * Clear old result.
-           */
           setResult(null);
 
-          /*
-           * Clear old answers.
-           */
           setAnswers({});
 
-          /*
-           * Clear old submitted answers.
-           */
           setSubmittedAnswers(
             []
           );
 
-          /*
-           * Clear old solutions.
-           */
           setSolutionItems(
             []
           );
 
-          /*
-           * Start from Question 1.
-           */
           setCurrentIdx(0);
 
-          /*
-           * Start fresh timer.
-           */
           setTimeLeft(
             Number(
               currentTest.time_limit_minutes
             ) * 60
           );
 
-          /*
-           * Prevent the URL cleanup
-           * from fetching the previous
-           * result again.
-           */
           skipNextFetchRef.current =
             true;
 
-          /*
-           * Remove ?retake=1
-           */
           router.replace(
             `/dashboard/student/mock-tests/${id}`
           );
@@ -916,13 +953,9 @@ export default function MockTestTakePage({
           return;
         }
 
-        /*
-         * ===================================================
-         * NORMAL MODE
-         * ===================================================
-         *
-         * Check latest completed attempt.
-         */
+        /* ===================================================
+           CHECK LATEST COMPLETED ATTEMPT
+        =================================================== */
 
         if (user) {
           console.log(
@@ -935,10 +968,6 @@ export default function MockTestTakePage({
               loadedQuestions
             );
 
-          /*
-           * If completed attempt exists,
-           * show result.
-           */
           if (completed) {
             console.log(
               'Completed attempt found. Showing result.'
@@ -950,11 +979,9 @@ export default function MockTestTakePage({
           }
         }
 
-        /*
-         * ===================================================
-         * NO COMPLETED ATTEMPT
-         * ===================================================
-         */
+        /* ===================================================
+           START FRESH TEST
+        =================================================== */
 
         console.log(
           'No completed attempt. Starting fresh test.'
@@ -979,7 +1006,6 @@ export default function MockTestTakePage({
             currentTest.time_limit_minutes
           ) * 60
         );
-
       } catch (error) {
         console.error(
           'Fetch test error:',
@@ -1072,9 +1098,6 @@ export default function MockTestTakePage({
           return false;
         }
 
-        /*
-         * No completed attempt.
-         */
         if (!attempt) {
           return false;
         }
@@ -1084,11 +1107,9 @@ export default function MockTestTakePage({
           attempt
         );
 
-        /*
-         * =================================================
-         * NORMALIZE RESULT
-         * =================================================
-         */
+        /* =================================================
+           NORMALIZE RESULT
+        ================================================= */
 
         const score =
           Number(
@@ -1157,11 +1178,9 @@ export default function MockTestTakePage({
           normalizedResult
         );
 
-        /*
-         * =================================================
-         * LOAD ANSWERS FOR EXACT ATTEMPT
-         * =================================================
-         */
+        /* =================================================
+           LOAD ANSWERS
+        ================================================= */
 
         const {
           data: answerData,
@@ -1216,11 +1235,9 @@ export default function MockTestTakePage({
           normalizedAnswers
         );
 
-        /*
-         * =================================================
-         * COMBINE QUESTIONS + ANSWERS
-         * =================================================
-         */
+        /* =================================================
+           COMBINE QUESTIONS + ANSWERS
+        ================================================= */
 
         const combined:
           SolutionItem[] =
@@ -1245,7 +1262,6 @@ export default function MockTestTakePage({
         );
 
         return true;
-
       } catch (error) {
         console.error(
           'Completed attempt loading error:',
@@ -1253,7 +1269,6 @@ export default function MockTestTakePage({
         );
 
         return false;
-
       } finally {
         setSolutionsLoading(
           false
@@ -1280,10 +1295,7 @@ export default function MockTestTakePage({
       }
 
       /*
-       * Extra client-side safety check.
-       *
-       * The database/RPC should ALSO enforce
-       * purchase access.
+       * Client-side payment safety check.
        */
       if (
         !test.is_free &&
@@ -1298,9 +1310,6 @@ export default function MockTestTakePage({
 
       setSubmitting(true);
 
-      /*
-       * Stop timer.
-       */
       if (timerRef.current) {
         clearTimeout(
           timerRef.current
@@ -1308,11 +1317,9 @@ export default function MockTestTakePage({
       }
 
       try {
-        /*
-         * =================================================
-         * PREPARE ANSWERS
-         * =================================================
-         */
+        /* =================================================
+           PREPARE ANSWERS
+        ================================================= */
 
         const answersArray =
           Object.entries(
@@ -1332,11 +1339,9 @@ export default function MockTestTakePage({
           answersArray
         );
 
-        /*
-         * =================================================
-         * SUBMIT THROUGH RPC
-         * =================================================
-         */
+        /* =================================================
+           SUBMIT THROUGH RPC
+        ================================================= */
 
         const {
           data,
@@ -1377,11 +1382,9 @@ export default function MockTestTakePage({
           data
         );
 
-        /*
-         * =================================================
-         * LOAD ACTUAL SAVED ATTEMPT
-         * =================================================
-         */
+        /* =================================================
+           LOAD ACTUAL SAVED ATTEMPT
+        ================================================= */
 
         const loaded =
           await loadLatestCompletedAttempt(
@@ -1389,11 +1392,9 @@ export default function MockTestTakePage({
             questions
           );
 
-        /*
-         * =================================================
-         * FALLBACK
-         * =================================================
-         */
+        /* =================================================
+           FALLBACK
+        ================================================= */
 
         if (!loaded) {
           const rpcResult =
@@ -1466,11 +1467,9 @@ export default function MockTestTakePage({
           });
         }
 
-        /*
-         * =================================================
-         * CLEAR CURRENT TEST STATE
-         * =================================================
-         */
+        /* =================================================
+           CLEAR CURRENT TEST STATE
+        ================================================= */
 
         setAnswers({});
 
@@ -1481,7 +1480,6 @@ export default function MockTestTakePage({
         toast.success(
           'Test submitted successfully!'
         );
-
       } catch (error) {
         console.error(
           'Submit exception:',
@@ -1493,7 +1491,6 @@ export default function MockTestTakePage({
             ? error.message
             : 'Something went wrong while submitting.'
         );
-
       } finally {
         setSubmitting(
           false
@@ -1523,9 +1520,7 @@ export default function MockTestTakePage({
   if (!test) {
     return (
       <DashboardShell role="student">
-
         <div className="py-16 text-center">
-
           <ClipboardCheck className="mx-auto h-12 w-12 text-slate-300" />
 
           <p className="mt-4 text-sm text-slate-500">
@@ -1540,9 +1535,7 @@ export default function MockTestTakePage({
               Back to Tests
             </Button>
           </Link>
-
         </div>
-
       </DashboardShell>
     );
   }
@@ -1557,44 +1550,26 @@ export default function MockTestTakePage({
   ) {
     return (
       <DashboardShell role="student">
-
         <div className="mx-auto max-w-xl">
-
           <Card className="border-slate-200 shadow-lg">
-
             <CardContent className="p-8 text-center">
 
-              {/* ICON */}
-
               <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-sky-100">
-
                 <ClipboardCheck className="h-8 w-8 text-sky-600" />
-
               </div>
 
-              {/* TITLE */}
-
               <h1 className="text-2xl font-bold text-slate-900">
-
                 {test.title}
-
               </h1>
 
-              {/* DESCRIPTION */}
-
               <p className="mt-3 text-sm leading-6 text-slate-500">
-
                 {test.description ||
                   'Purchase this mock test to start your attempt.'}
-
               </p>
-
-              {/* TEST INFO */}
 
               <div className="mt-6 grid grid-cols-2 gap-3">
 
                 <div className="rounded-xl bg-slate-50 p-4">
-
                   <p className="text-xs text-slate-500">
                     Duration
                   </p>
@@ -1602,11 +1577,9 @@ export default function MockTestTakePage({
                   <p className="mt-1 font-semibold text-slate-900">
                     {test.time_limit_minutes} minutes
                   </p>
-
                 </div>
 
                 <div className="rounded-xl bg-slate-50 p-4">
-
                   <p className="text-xs text-slate-500">
                     Attempts
                   </p>
@@ -1614,17 +1587,13 @@ export default function MockTestTakePage({
                   <p className="mt-1 font-semibold text-slate-900">
                     {test.attempt_limit}
                   </p>
-
                 </div>
 
               </div>
 
-              {/* EXAM / CATEGORY */}
-
               <div className="mt-3 grid grid-cols-2 gap-3">
 
                 <div className="rounded-xl bg-slate-50 p-4">
-
                   <p className="text-xs text-slate-500">
                     Exam
                   </p>
@@ -1632,11 +1601,9 @@ export default function MockTestTakePage({
                   <p className="mt-1 font-semibold text-slate-900">
                     {test.exam_name}
                   </p>
-
                 </div>
 
                 <div className="rounded-xl bg-slate-50 p-4">
-
                   <p className="text-xs text-slate-500">
                     Category
                   </p>
@@ -1644,42 +1611,29 @@ export default function MockTestTakePage({
                   <p className="mt-1 font-semibold text-slate-900">
                     {test.category}
                   </p>
-
                 </div>
 
               </div>
 
-              {/* PRICE */}
-
               <div className="mt-6 rounded-xl bg-sky-50 p-5">
-
                 <p className="text-sm text-slate-500">
                   Mock Test Price
                 </p>
 
                 <p className="mt-1 flex items-center justify-center text-3xl font-bold text-slate-900">
-
                   <IndianRupee className="h-7 w-7" />
 
                   {Number(
                     test.price
                   ).toFixed(0)}
-
                 </p>
-
               </div>
 
-              {/* SECURITY */}
-
               <div className="mt-4 flex items-center justify-center gap-2 text-xs text-slate-500">
-
                 <ShieldCheck className="h-4 w-4 text-emerald-500" />
 
                 Secure payment powered by PayU
-
               </div>
-
-              {/* BUY BUTTON */}
 
               <Button
                 onClick={
@@ -1690,7 +1644,6 @@ export default function MockTestTakePage({
                 }
                 className="mt-6 w-full bg-sky-500 py-6 text-white hover:bg-sky-600"
               >
-
                 {purchaseLoading ? (
                   <>
                     <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -1707,31 +1660,23 @@ export default function MockTestTakePage({
                     ).toFixed(0)}
                   </>
                 )}
-
               </Button>
-
-              {/* BACK */}
 
               <Link
                 href="/dashboard/student/mock-tests"
                 className="mt-3 block"
               >
-
                 <Button
                   variant="outline"
                   className="w-full"
                 >
                   Back to Mock Tests
                 </Button>
-
               </Link>
 
             </CardContent>
-
           </Card>
-
         </div>
-
       </DashboardShell>
     );
   }
@@ -1745,9 +1690,7 @@ export default function MockTestTakePage({
   ) {
     return (
       <DashboardShell role="student">
-
         <div className="py-16 text-center">
-
           <ClipboardCheck className="mx-auto h-12 w-12 text-slate-300" />
 
           <p className="mt-4 text-sm text-slate-500">
@@ -1762,9 +1705,7 @@ export default function MockTestTakePage({
               Back to Tests
             </Button>
           </Link>
-
         </div>
-
       </DashboardShell>
     );
   }
@@ -1790,15 +1731,9 @@ export default function MockTestTakePage({
 
     return (
       <DashboardShell role="student">
-
         <div className="mx-auto max-w-4xl">
 
-          {/* =================================================
-              RESULT CARD
-          ================================================= */}
-
           <Card className="border-slate-200 shadow-lg">
-
             <CardContent className="p-8 text-center">
 
               <div
@@ -1808,7 +1743,6 @@ export default function MockTestTakePage({
                     : 'bg-amber-100'
                 }`}
               >
-
                 <Award
                   className={`h-10 w-10 ${
                     passed
@@ -1816,115 +1750,78 @@ export default function MockTestTakePage({
                       : 'text-amber-600'
                   }`}
                 />
-
               </div>
 
               <h1 className="text-2xl font-bold text-slate-900">
-
                 {passed
                   ? 'Excellent work!'
                   : 'Keep practicing!'}
-
               </h1>
 
               <p className="mt-2 text-slate-500">
-
                 {test.title} - Attempt{' '}
-
                 {result.attempt_number}
-
               </p>
 
-              {/* SCORE */}
-
               <div className="mt-6 rounded-xl bg-slate-50 p-6">
-
                 <div className="text-4xl font-bold text-slate-900">
-
                   {result.percentage}%
-
                 </div>
 
                 <div className="mt-1 text-sm text-slate-500">
-
                   You scored{' '}
-
                   {result.score}{' '}
-
                   out of{' '}
-
                   {result.total}{' '}
-
                   points
-
                 </div>
-
               </div>
-
-              {/* CORRECT / INCORRECT */}
 
               <div className="mt-6 grid grid-cols-2 gap-4">
 
                 <div className="rounded-lg bg-emerald-50 p-4">
-
                   <div className="flex items-center justify-center gap-2 text-emerald-700">
-
                     <CheckCircle2 className="h-5 w-5" />
 
                     <span className="text-2xl font-bold">
                       {result.score}
                     </span>
-
                   </div>
 
                   <div className="text-xs text-emerald-600">
                     Correct points
                   </div>
-
                 </div>
 
                 <div className="rounded-lg bg-red-50 p-4">
-
                   <div className="flex items-center justify-center gap-2 text-red-700">
-
                     <XCircle className="h-5 w-5" />
 
                     <span className="text-2xl font-bold">
                       {incorrectPoints}
                     </span>
-
                   </div>
 
                   <div className="text-xs text-red-600">
                     Incorrect points
                   </div>
-
                 </div>
 
               </div>
 
-              {/* RETAKE */}
-
               <div className="mt-6">
-
                 <Link
                   href={`/dashboard/student/mock-tests/${test.id}?retake=1`}
                 >
-
                   <Button className="bg-sky-500 text-white hover:bg-sky-600">
-
                     <RotateCcw className="mr-2 h-4 w-4" />
 
                     Retake Test
-
                   </Button>
-
                 </Link>
-
               </div>
 
             </CardContent>
-
           </Card>
 
           {/* =================================================
@@ -1934,69 +1831,46 @@ export default function MockTestTakePage({
           <div className="mt-8">
 
             <div className="mb-5">
-
               <div className="flex items-center gap-2">
-
                 <BookOpen className="h-6 w-6 text-sky-500" />
 
                 <h2 className="text-2xl font-bold text-slate-900">
-
                   Question-wise Solutions
-
                 </h2>
-
               </div>
 
               <p className="mt-1 text-sm text-slate-500">
-
                 Review your answers and learn
                 from the explanations.
-
               </p>
-
             </div>
 
-            {/* SOLUTION LOADING */}
-
             {solutionsLoading ? (
-
               <Card className="border-slate-200">
-
                 <CardContent className="flex items-center justify-center py-12">
 
                   <Loader2 className="mr-3 h-6 w-6 animate-spin text-sky-500" />
 
                   <span className="text-sm text-slate-500">
-
                     Loading solutions...
-
                   </span>
 
                 </CardContent>
-
               </Card>
-
             ) : solutionItems.length === 0 ? (
-
               <Card className="border-slate-200">
-
                 <CardContent className="py-10 text-center">
 
                   <BookOpen className="mx-auto h-10 w-10 text-slate-300" />
 
                   <p className="mt-3 text-sm text-slate-500">
-
                     Solutions are not available
                     for this attempt.
-
                   </p>
 
                 </CardContent>
-
               </Card>
-
             ) : (
-
               <div className="space-y-5">
 
                 {solutionItems.map(
@@ -2004,7 +1878,6 @@ export default function MockTestTakePage({
                     item,
                     index
                   ) => {
-
                     const question =
                       item.question;
 
@@ -2020,15 +1893,12 @@ export default function MockTestTakePage({
                       false;
 
                     return (
-
                       <Card
                         key={
                           question.id
                         }
                         className="overflow-hidden border-slate-200 shadow-sm"
                       >
-
-                        {/* QUESTION HEADER */}
 
                         <CardHeader className="bg-slate-50">
 
@@ -2037,9 +1907,7 @@ export default function MockTestTakePage({
                             <CardTitle className="text-base leading-6 text-slate-900">
 
                               <span className="mr-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-sky-100 text-xs font-bold text-sky-700">
-
                                 {index + 1}
-
                               </span>
 
                               {
@@ -2049,7 +1917,6 @@ export default function MockTestTakePage({
                             </CardTitle>
 
                             {isCorrect ? (
-
                               <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
 
                                 <CheckCircle2 className="h-4 w-4" />
@@ -2057,9 +1924,7 @@ export default function MockTestTakePage({
                                 Correct
 
                               </span>
-
                             ) : (
-
                               <span className="flex shrink-0 items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">
 
                                 <XCircle className="h-4 w-4" />
@@ -2067,7 +1932,6 @@ export default function MockTestTakePage({
                                 Incorrect
 
                               </span>
-
                             )}
 
                           </div>
@@ -2091,7 +1955,6 @@ export default function MockTestTakePage({
                                   optionIndex;
 
                                 return (
-
                                   <div
                                     key={
                                       optionIndex
@@ -2118,34 +1981,25 @@ export default function MockTestTakePage({
                                             : 'border-slate-300 text-slate-500'
                                         }`}
                                       >
-
                                         {String.fromCharCode(
                                           65 +
                                             optionIndex
                                         )}
-
                                       </div>
 
                                       <span className="text-sm text-slate-700">
-
                                         {option}
-
                                       </span>
 
                                       {selected && (
-
                                         <span className="ml-auto text-xs font-semibold">
-
                                           Your answer
-
                                         </span>
-
                                       )}
 
                                     </div>
 
                                   </div>
-
                                 );
                               }
                             )}
@@ -2155,44 +2009,33 @@ export default function MockTestTakePage({
                           {/* UNANSWERED */}
 
                           {!answer && (
-
                             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
-
                               You did not answer
                               this question.
-
                             </div>
-
                           )}
 
                           {/* EXPLANATION */}
 
                           {question.explanation && (
-
                             <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
 
                               <h3 className="mb-2 font-semibold text-sky-800">
-
                                 Explanation
-
                               </h3>
 
                               <p className="text-sm leading-6 text-slate-700">
-
                                 {
                                   question.explanation
                                 }
-
                               </p>
 
                             </div>
-
                           )}
 
                           {/* VIDEO SOLUTION */}
 
                           {question.solution_video_url && (
-
                             <div className="overflow-hidden rounded-xl border border-slate-200">
 
                               <div className="flex items-center gap-2 border-b bg-slate-50 px-4 py-3">
@@ -2200,26 +2043,19 @@ export default function MockTestTakePage({
                                 <Video className="h-5 w-5 text-sky-500" />
 
                                 <div>
-
                                   <h3 className="font-semibold text-slate-900">
-
                                     Video Solution
-
                                   </h3>
 
                                   <p className="text-xs text-slate-500">
-
                                     Watch the teacher's
                                     explanation
-
                                   </p>
-
                                 </div>
 
                               </div>
 
                               <div className="bg-black">
-
                                 <video
                                   src={
                                     question.solution_video_url
@@ -2229,12 +2065,9 @@ export default function MockTestTakePage({
                                   preload="metadata"
                                   className="max-h-[500px] w-full"
                                 >
-
                                   Your browser does not
                                   support video playback.
-
                                 </video>
-
                               </div>
 
                               <div className="flex items-center gap-2 bg-white px-4 py-3 text-xs text-slate-500">
@@ -2243,19 +2076,16 @@ export default function MockTestTakePage({
 
                                 Video solution for
                                 Question{' '}
-
                                 {index + 1}
 
                               </div>
 
                             </div>
-
                           )}
 
                           {/* NO VIDEO */}
 
                           {!question.solution_video_url && (
-
                             <div className="flex items-center gap-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">
 
                               <Video className="h-4 w-4 text-slate-400" />
@@ -2265,19 +2095,15 @@ export default function MockTestTakePage({
                               question.
 
                             </div>
-
                           )}
 
                         </CardContent>
-
                       </Card>
-
                     );
                   }
                 )}
 
               </div>
-
             )}
 
           </div>
@@ -2290,35 +2116,26 @@ export default function MockTestTakePage({
               href="/dashboard/student/mock-tests"
               className="flex-1"
             >
-
               <Button
                 variant="outline"
                 className="w-full"
               >
-
                 More Tests
-
               </Button>
-
             </Link>
 
             <Link
               href="/dashboard/student/mock-tests/results"
               className="flex-1"
             >
-
               <Button className="w-full bg-sky-500 text-white hover:bg-sky-600">
-
                 View Rankings
-
               </Button>
-
             </Link>
 
           </div>
 
         </div>
-
       </DashboardShell>
     );
   }
@@ -2330,15 +2147,10 @@ export default function MockTestTakePage({
   const currentQ =
     questions[currentIdx];
 
-  /*
-   * Safety check.
-   */
   if (!currentQ) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
-
         <Loader2 className="h-8 w-8 animate-spin text-sky-500" />
-
       </div>
     );
   }
@@ -2372,18 +2184,14 @@ export default function MockTestTakePage({
           href="/dashboard/student/mock-tests"
           className="mb-4 inline-block"
         >
-
           <Button
             variant="ghost"
             className="text-slate-600"
           >
-
             <ArrowLeft className="mr-2 h-4 w-4" />
 
             Exit Test
-
           </Button>
-
         </Link>
 
         {/* =================================================
@@ -2395,17 +2203,12 @@ export default function MockTestTakePage({
           <div>
 
             <h1 className="text-2xl font-bold text-slate-900">
-
               {test.title}
-
             </h1>
 
             <p className="text-sm text-slate-500">
-
               {test.exam_name} -{' '}
-
               {test.category}
-
             </p>
 
           </div>
@@ -2417,22 +2220,17 @@ export default function MockTestTakePage({
                 : 'bg-slate-100 text-slate-700'
             }`}
           >
-
             <Clock className="h-5 w-5" />
 
             <span className="font-mono text-lg font-bold">
-
               {minutes}:
-
               {seconds
                 .toString()
                 .padStart(
                   2,
                   '0'
                 )}
-
             </span>
-
           </div>
 
         </div>
@@ -2446,23 +2244,15 @@ export default function MockTestTakePage({
           <div className="mb-2 flex items-center justify-between text-sm">
 
             <span className="font-medium text-slate-600">
-
               Question{' '}
-
               {currentIdx + 1}
-
               {' '}of{' '}
-
               {questions.length}
-
             </span>
 
             <span className="text-slate-500">
-
               {answeredCount}{' '}
-
               answered
-
             </span>
 
           </div>
@@ -2493,9 +2283,7 @@ export default function MockTestTakePage({
           <CardHeader>
 
             <CardTitle className="text-lg">
-
               {currentQ.question_text}
-
             </CardTitle>
 
           </CardHeader>
@@ -2514,7 +2302,6 @@ export default function MockTestTakePage({
                   ] === i;
 
                 return (
-
                   <button
                     key={i}
                     type="button"
@@ -2541,13 +2328,9 @@ export default function MockTestTakePage({
                           : 'border-slate-300'
                       }`}
                     >
-
                       {isSelected && (
-
                         <CheckCircle2 className="h-4 w-4 text-white" />
-
                       )}
-
                     </div>
 
                     <span
@@ -2557,13 +2340,10 @@ export default function MockTestTakePage({
                           : 'text-slate-600'
                       }`}
                     >
-
                       {opt}
-
                     </span>
 
                   </button>
-
                 );
               }
             )}
@@ -2592,11 +2372,9 @@ export default function MockTestTakePage({
               currentIdx === 0
             }
           >
-
             <ArrowLeft className="mr-2 h-4 w-4" />
 
             Previous
-
           </Button>
 
           {currentIdx ===
@@ -2611,19 +2389,13 @@ export default function MockTestTakePage({
               }
               className="bg-emerald-500 text-white hover:bg-emerald-600"
             >
-
               {submitting ? (
-
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-
               ) : (
-
                 <CheckCircle2 className="mr-2 h-4 w-4" />
-
               )}
 
               Submit Test
-
             </Button>
 
           ) : (
@@ -2639,11 +2411,9 @@ export default function MockTestTakePage({
               }
               className="bg-sky-500 text-white hover:bg-sky-600"
             >
-
               Next
 
               <ArrowRight className="ml-2 h-4 w-4" />
-
             </Button>
 
           )}
@@ -2671,7 +2441,6 @@ export default function MockTestTakePage({
                 i === currentIdx;
 
               return (
-
                 <button
                   key={q.id}
                   type="button"
@@ -2686,11 +2455,8 @@ export default function MockTestTakePage({
                       : 'bg-slate-100 text-slate-500'
                   }`}
                 >
-
                   {i + 1}
-
                 </button>
-
               );
             }
           )}
