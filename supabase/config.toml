@@ -1,5 +1,5 @@
 [functions.payu-create-payment]
-verify_jwt = true
+verify_jwt = false
 entrypoint = "./functions/payu-create-payment/index.ts"
 
 [functions.payu-webhook]

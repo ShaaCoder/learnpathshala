@@ -1,119 +1,487 @@
 import { createClient } from "npm:@supabase/supabase-js@2.58.0";
 
+// --------------------------------------------------
+// CORS
+// --------------------------------------------------
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Max-Age": "86400",
 };
 
+// --------------------------------------------------
+// JSON RESPONSE HELPER
+// --------------------------------------------------
+function jsonResponse(
+  data: Record<string, unknown>,
+  status = 200,
+) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+// --------------------------------------------------
+// EDGE FUNCTION
+// --------------------------------------------------
 Deno.serve(async (req: Request) => {
+  // ------------------------------------------------
+  // CORS PREFLIGHT
+  // ------------------------------------------------
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: corsHeaders });
+    return new Response("ok", {
+      status: 200,
+      headers: corsHeaders,
+    });
+  }
+
+  // ------------------------------------------------
+  // ONLY POST ALLOWED
+  // ------------------------------------------------
+  if (req.method !== "POST") {
+    return jsonResponse(
+      {
+        error: "Method not allowed",
+      },
+      405,
+    );
   }
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    // ==================================================
+    // 1. GET SUPABASE ENVIRONMENT VARIABLES
+    // ==================================================
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const supabaseServiceKey = Deno.env.get(
+      "SUPABASE_SERVICE_ROLE_KEY",
+    );
 
-    const authHeader = req.headers.get("Authorization") || "";
-    const token = authHeader.replace("Bearer ", "");
+    if (!supabaseUrl) {
+      console.error("SUPABASE_URL is missing");
 
-    const userClient = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
-    const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
-
-    const { data: userData, error: userError } = await userClient.auth.getUser();
-    if (userError || !userData.user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse(
+        {
+          error: "Supabase URL is not configured",
+        },
+        500,
+      );
     }
 
-    const { courseId } = await req.json();
-    if (!courseId) {
-      return new Response(JSON.stringify({ error: "Course ID required" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (!supabaseAnonKey) {
+      console.error("SUPABASE_ANON_KEY is missing");
+
+      return jsonResponse(
+        {
+          error: "Supabase anon key is not configured",
+        },
+        500,
+      );
     }
 
-    // Create payment transaction via RPC (uses caller's auth)
-    const { data: txnData, error: txnError } = await userClient.rpc("create_payment_transaction", {
-      p_course_id: courseId,
-    });
+    if (!supabaseServiceKey) {
+      console.error("SUPABASE_SERVICE_ROLE_KEY is missing");
+
+      return jsonResponse(
+        {
+          error: "Supabase service key is not configured",
+        },
+        500,
+      );
+    }
+
+    // ==================================================
+    // 2. GET AUTHORIZATION HEADER
+    // ==================================================
+    const authHeader =
+      req.headers.get("Authorization") || "";
+
+    if (!authHeader) {
+      return jsonResponse(
+        {
+          error: "Authorization header is required",
+        },
+        401,
+      );
+    }
+
+    if (!authHeader.startsWith("Bearer ")) {
+      return jsonResponse(
+        {
+          error: "Invalid authorization header",
+        },
+        401,
+      );
+    }
+
+    const token = authHeader
+      .replace(/^Bearer\s+/i, "")
+      .trim();
+
+    if (!token) {
+      return jsonResponse(
+        {
+          error: "Invalid authentication token",
+        },
+        401,
+      );
+    }
+
+    // ==================================================
+    // 3. USER SUPABASE CLIENT
+    // ==================================================
+    const userClient = createClient(
+      supabaseUrl,
+      supabaseAnonKey,
+      {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      },
+    );
+
+    // ==================================================
+    // 4. SERVICE ROLE CLIENT
+    // ==================================================
+    const serviceClient = createClient(
+      supabaseUrl,
+      supabaseServiceKey,
+    );
+
+    // ==================================================
+    // 5. VERIFY LOGGED-IN USER
+    // ==================================================
+    const {
+      data: userData,
+      error: userError,
+    } = await userClient.auth.getUser();
+
+    if (userError || !userData?.user) {
+      console.error(
+        "User authentication failed:",
+        userError?.message,
+      );
+
+      return jsonResponse(
+        {
+          error: "Unauthorized",
+        },
+        401,
+      );
+    }
+
+    const user = userData.user;
+
+    // ==================================================
+    // 6. READ REQUEST BODY
+    // ==================================================
+    let body: {
+      courseId?: string;
+    };
+
+    try {
+      body = await req.json();
+    } catch {
+      return jsonResponse(
+        {
+          error: "Invalid JSON request body",
+        },
+        400,
+      );
+    }
+
+    const courseId = body?.courseId;
+
+    if (!courseId || typeof courseId !== "string") {
+      return jsonResponse(
+        {
+          error: "Course ID required",
+        },
+        400,
+      );
+    }
+
+    // ==================================================
+    // 7. CREATE PAYMENT TRANSACTION
+    // ==================================================
+    const {
+      data: txnData,
+      error: txnError,
+    } = await userClient.rpc(
+      "create_payment_transaction",
+      {
+        p_course_id: courseId,
+      },
+    );
 
     if (txnError) {
-      return new Response(JSON.stringify({ error: txnError.message }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      console.error(
+        "create_payment_transaction error:",
+        txnError.message,
+      );
+
+      return jsonResponse(
+        {
+          error: txnError.message,
+        },
+        400,
+      );
     }
 
-    // Get PayU settings from database (service role bypasses RLS)
-    const { data: settings, error: settingsError } = await serviceClient
+    if (!txnData) {
+      return jsonResponse(
+        {
+          error: "Payment transaction was not created",
+        },
+        400,
+      );
+    }
+
+    // ==================================================
+    // 8. NORMALIZE RPC RESPONSE
+    // ==================================================
+    // Depending on how the RPC function is defined,
+    // Supabase may return an object or an array.
+    const txn = Array.isArray(txnData)
+      ? txnData[0]
+      : txnData;
+
+    if (!txn) {
+      return jsonResponse(
+        {
+          error: "Invalid transaction response",
+        },
+        400,
+      );
+    }
+
+    if (!txn.txnid) {
+      console.error(
+        "Transaction response missing txnid:",
+        txn,
+      );
+
+      return jsonResponse(
+        {
+          error: "Transaction ID was not generated",
+        },
+        500,
+      );
+    }
+
+    if (
+      txn.amount === undefined ||
+      txn.amount === null
+    ) {
+      console.error(
+        "Transaction response missing amount:",
+        txn,
+      );
+
+      return jsonResponse(
+        {
+          error: "Transaction amount was not generated",
+        },
+        500,
+      );
+    }
+
+    // ==================================================
+    // 9. GET PAYU SETTINGS
+    // ==================================================
+    const {
+      data: settings,
+      error: settingsError,
+    } = await serviceClient
       .from("payment_settings")
-      .select("merchant_key, merchant_salt, test_mode")
+      .select(
+        "merchant_key, merchant_salt, test_mode",
+      )
       .eq("id", 1)
       .maybeSingle();
 
-    if (settingsError || !settings || !settings.merchant_key) {
-      return new Response(JSON.stringify({ error: "Payment gateway not configured" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (settingsError) {
+      console.error(
+        "Payment settings error:",
+        settingsError.message,
+      );
+
+      return jsonResponse(
+        {
+          error:
+            "Unable to load payment gateway settings",
+        },
+        500,
+      );
     }
 
-    // Get student email and name
-    const { data: profile } = await serviceClient
+    if (
+      !settings ||
+      !settings.merchant_key ||
+      !settings.merchant_salt
+    ) {
+      return jsonResponse(
+        {
+          error:
+            "Payment gateway is not configured",
+        },
+        500,
+      );
+    }
+
+    // ==================================================
+    // 10. GET STUDENT PROFILE
+    // ==================================================
+    const {
+      data: profile,
+      error: profileError,
+    } = await serviceClient
       .from("profiles")
       .select("full_name, email")
-      .eq("id", userData.user.id)
+      .eq("id", user.id)
       .maybeSingle();
 
-    const txn = txnData as any;
+    if (profileError) {
+      console.error(
+        "Profile lookup error:",
+        profileError.message,
+      );
+    }
+
+    // ==================================================
+    // 11. PREPARE PAYU DATA
+    // ==================================================
     const merchantKey = settings.merchant_key;
     const merchantSalt = settings.merchant_salt;
-    const isTest = settings.test_mode;
+    const isTest = Boolean(settings.test_mode);
 
-    // Build PayU hash: sha512(key|txnid|amount|productinfo|firstname|email||||||||||||salt)
-    const productinfo = txn.course_title || "Course Enrollment";
-    const firstname = profile?.full_name?.split(" ")[0] || "Student";
-    const email = profile?.email || userData.user.email || "";
+    const productinfo =
+      txn.course_title ||
+      "Course Enrollment";
+
+    const firstname =
+      profile?.full_name
+        ?.trim()
+        ?.split(/\s+/)[0] ||
+      "Student";
+
+    const email =
+      profile?.email ||
+      user.email ||
+      "";
+
     const amount = String(txn.amount);
-    const txnid = txn.txnid;
+    const txnid = String(txn.txnid);
 
-    const hashString = `${merchantKey}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|||||||||||${merchantSalt}`;
+    if (!email) {
+      return jsonResponse(
+        {
+          error:
+            "Student email is required for payment",
+        },
+        400,
+      );
+    }
 
-    const hashBuffer = await crypto.subtle.digest("SHA-512", new TextEncoder().encode(hashString));
-    const hash = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
+    // ==================================================
+    // 12. PAYU HASH
+    // ==================================================
+    //
+    // PayU request hash format:
+    //
+    // key|txnid|amount|productinfo|firstname|email
+    // |udf1|udf2|udf3|udf4|udf5
+    // ||||||||||salt
+    //
+    // We are not using UDF fields.
+    //
+    const hashString =
+      `${merchantKey}|${txnid}|${amount}|${productinfo}|${firstname}|${email}||||||||||||${merchantSalt}`;
+
+    const hashBuffer =
+      await crypto.subtle.digest(
+        "SHA-512",
+        new TextEncoder().encode(hashString),
+      );
+
+    const hash = Array.from(
+      new Uint8Array(hashBuffer),
+    )
+      .map((byte) =>
+        byte.toString(16).padStart(2, "0"),
+      )
       .join("");
 
+    // ==================================================
+    // 13. PAYU PAYMENT URL
+    // ==================================================
     const payuBaseUrl = isTest
       ? "https://test.payu.in/_payment"
       : "https://secure.payu.in/_payment";
 
-    const surl = `${supabaseUrl}/functions/v1/payu-webhook`;
-    const curl = `${supabaseUrl}/functions/v1/payu-webhook`;
+    // ==================================================
+    // 14. CALLBACK URL
+    // ==================================================
+    const callbackUrl =
+      `${supabaseUrl}/functions/v1/payu-webhook`;
 
-    return new Response(JSON.stringify({
+    // ==================================================
+    // 15. SERVER LOG
+    // ==================================================
+    // IMPORTANT:
+    // Never log merchantSalt or the generated hash.
+    console.log("PayU payment initialized:", {
+      userId: user.id,
+      courseId,
+      txnid,
+      amount,
+      testMode: isTest,
+    });
+
+    // ==================================================
+    // 16. RETURN PAYMENT DATA
+    // ==================================================
+    return jsonResponse({
       txnid,
       amount,
       productinfo,
       firstname,
       email,
-      hash,
+
+      // PayU
       key: merchantKey,
+      hash,
       payu_url: payuBaseUrl,
-      surl,
-      curl,
+
+      // PayU callbacks
+      surl: callbackUrl,
+      curl: callbackUrl,
+
       test_mode: isTest,
-    }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: "Payment initialization failed" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  } catch (error) {
+    console.error(
+      "PayU payment initialization error:",
+      error,
+    );
+
+    return jsonResponse(
+      {
+        error: "Payment initialization failed",
+        details:
+          error instanceof Error
+            ? error.message
+            : "Unknown error",
+      },
+      500,
     );
   }
 });
