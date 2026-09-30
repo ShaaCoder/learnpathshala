@@ -16,7 +16,7 @@ export default function AboutPage() {
               <GraduationCap className="h-6 w-6 text-white" />
             </div>
             <span className="text-xl font-bold tracking-tight text-slate-900">
-              Shaan<span className="text-sky-500">Academy</span>
+              Learn<span className="text-sky-500">PathShala</span>
             </span>
           </Link>
           <div className="hidden items-center gap-8 md:flex">
@@ -34,7 +34,7 @@ export default function AboutPage() {
       {/* Hero */}
       <section className="bg-gradient-to-br from-sky-50 via-white to-cyan-50 py-20">
         <div className="mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
-          <h1 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl">About ShaanAcademy</h1>
+          <h1 className="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl">About learnpathshala</h1>
           <p className="mt-6 text-lg text-slate-600">
             We are on a mission to make quality education accessible to every student, empowering teachers with the right tools, and giving administrators full control over the learning experience.
           </p>
@@ -47,10 +47,10 @@ export default function AboutPage() {
           <div className="prose prose-slate max-w-none">
             <h2 className="text-2xl font-bold text-slate-900">Our Story</h2>
             <p className="mt-4 text-slate-600">
-              ShaanAcademy was founded with a simple belief: learning should be engaging, accessible, and effective. We saw a gap between traditional classroom learning and the digital tools available, so we built a platform that bridges that gap.
+              learnpathshala was founded with a simple belief: learning should be engaging, accessible, and effective. We saw a gap between traditional classroom learning and the digital tools available, so we built a platform that bridges that gap.
             </p>
             <p className="mt-4 text-slate-600">
-              From live classes that bring the classroom experience online, to mock tests that help students prepare for real exams, to role-based dashboards that give everyone exactly what they need — ShaanAcademy is designed for the entire education ecosystem.
+              From live classes that bring the classroom experience online, to mock tests that help students prepare for real exams, to role-based dashboards that give everyone exactly what they need — learnpathshala is designed for the entire education ecosystem.
             </p>
           </div>
         </div>
@@ -104,7 +104,7 @@ export default function AboutPage() {
       <section className="bg-sky-50 py-16">
         <div className="mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
           <h2 className="text-3xl font-bold tracking-tight text-slate-900">Ready to start learning?</h2>
-          <p className="mt-4 text-lg text-slate-600">Join thousands of students already learning on ShaanAcademy.</p>
+          <p className="mt-4 text-lg text-slate-600">Join thousands of students already learning on learnpathshala.</p>
           <div className="mt-8 flex justify-center gap-4">
             <Link href="/register"><Button size="lg" className="bg-sky-500 hover:bg-sky-600 text-white shadow-lg shadow-sky-500/30">Get Started <ArrowRight className="ml-2 h-5 w-5" /></Button></Link>
             <Link href="/courses"><Button size="lg" variant="outline">Browse Courses</Button></Link>

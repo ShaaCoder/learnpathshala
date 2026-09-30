@@ -58,7 +58,7 @@ export default function LoginPage() {
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur-md">
             <GraduationCap className="h-6 w-6 text-white" />
           </div>
-          <span className="text-xl font-bold text-white">ShaanAcademy</span>
+          <span className="text-xl font-bold text-white">learnpathshala</span>
         </Link>
 
         <div className="relative">
@@ -96,7 +96,7 @@ export default function LoginPage() {
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-cyan-400">
                 <GraduationCap className="h-6 w-6 text-white" />
               </div>
-              <span className="text-xl font-bold text-slate-900">ShaanAcademy</span>
+              <span className="text-xl font-bold text-slate-900">learnpathshala</span>
             </Link>
             <h2 className="mt-6 text-2xl font-bold text-slate-900">Sign in to your account</h2>
             <p className="mt-2 text-sm text-slate-500">Enter your credentials to access your dashboard</p>

@@ -42,7 +42,7 @@ export default function RegisterPage() {
     }
 
     if (data.user) {
-      toast.success('Account created! Welcome to ShaanAcademy.');
+      toast.success('Account created! Welcome to learnpathshala.');
       router.push(`/dashboard/${role}`);
     }
     setLoading(false);
@@ -64,7 +64,7 @@ export default function RegisterPage() {
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-cyan-400">
                 <GraduationCap className="h-6 w-6 text-white" />
               </div>
-              <span className="text-xl font-bold text-slate-900">ShaanAcademy</span>
+              <span className="text-xl font-bold text-slate-900">learnpathshala</span>
             </Link>
             <h2 className="mt-6 text-2xl font-bold text-slate-900">Create your account</h2>
             <p className="mt-2 text-sm text-slate-500">Join thousands of learners and educators</p>
@@ -177,7 +177,7 @@ export default function RegisterPage() {
 
         <div className="relative">
           <h1 className="text-4xl font-bold leading-tight text-white">
-            Start your journey with ShaanAcademy
+            Start your journey with learnpathshala
           </h1>
           <p className="mt-4 text-lg text-emerald-50">
             Whether you&apos;re here to learn, teach, or manage, we&apos;ve got the right tools for you.

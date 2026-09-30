@@ -1,5 +1,5 @@
 /*
-# ShaanAcademy Mock Test System
+# learnpathshala Mock Test System
 
 ## Overview
 Adds a complete mock-test workflow for admins, teachers, and students. Admins control publishing, approval, pricing, limits, assignment, and analytics. Teachers create tests and questions, add explanations and images, then submit tests for approval. Students take published tests and receive server-calculated scores and performance history.

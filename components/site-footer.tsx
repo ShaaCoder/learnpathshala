@@ -20,7 +20,7 @@ export function SiteFooter() {
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-cyan-400">
                 <GraduationCap className="h-5 w-5 text-white" />
               </div>
-              <span className="text-lg font-bold text-slate-900">ShaanAcademy</span>
+              <span className="text-lg font-bold text-slate-900">learnpathshala</span>
             </div>
             <p className="mt-3 text-sm text-slate-500">
               A modern learning platform with live classes, mock tests, and role-based dashboards for admins, teachers, and students.
@@ -43,7 +43,7 @@ export function SiteFooter() {
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Get in Touch</h3>
             <ul className="mt-3 space-y-2 text-sm text-slate-500">
-              <li>Email: support@shaanacademy.com</li>
+              <li>Email: support@learnpathshala.com</li>
               <li>Phone: +91 98765 43210</li>
               <li>Address: New Delhi, India</li>
             </ul>
@@ -51,7 +51,7 @@ export function SiteFooter() {
         </div>
 
         <div className="mt-8 border-t border-slate-100 pt-6 text-center">
-          <p className="text-sm text-slate-500">© 2026 ShaanAcademy. All rights reserved.</p>
+          <p className="text-sm text-slate-500">© 2026 learnpathshala. All rights reserved.</p>
         </div>
       </div>
     </footer>

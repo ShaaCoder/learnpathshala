@@ -36,7 +36,7 @@ export default function PrivacyPolicyPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-900">1. Introduction</h2>
             <p className="mt-3 text-slate-600">
-              ShaanAcademy ("we", "us", or "our") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your personal information when you use our platform.
+              learnpathshala ("we", "us", or "our") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, and safeguard your personal information when you use our platform.
             </p>
           </div>
 
@@ -90,7 +90,7 @@ export default function PrivacyPolicyPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-900">7. Contact Us</h2>
             <p className="mt-3 text-slate-600">
-              If you have questions about this Privacy Policy, please contact us at support@shaanacademy.com.
+              If you have questions about this Privacy Policy, please contact us at support@learnpathshala.com.
             </p>
           </div>
         </div>

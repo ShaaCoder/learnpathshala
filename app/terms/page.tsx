@@ -36,7 +36,7 @@ export default function TermsPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-900">1. Acceptance of Terms</h2>
             <p className="mt-3 text-slate-600">
-              By accessing or using ShaanAcademy, you agree to be bound by these Terms &amp; Conditions. If you do not agree with any part of these terms, please do not use the platform.
+              By accessing or using learnpathshala, you agree to be bound by these Terms &amp; Conditions. If you do not agree with any part of these terms, please do not use the platform.
             </p>
           </div>
 
@@ -82,7 +82,7 @@ export default function TermsPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-900">6. Content Ownership</h2>
             <p className="mt-3 text-slate-600">
-              All content created on the platform (courses, questions, mock tests) remains the property of the respective creators. ShaanAcademy retains a license to host and display content for educational purposes.
+              All content created on the platform (courses, questions, mock tests) remains the property of the respective creators. learnpathshala retains a license to host and display content for educational purposes.
             </p>
           </div>
 
@@ -113,7 +113,7 @@ export default function TermsPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-900">10. Contact</h2>
             <p className="mt-3 text-slate-600">
-              For questions about these Terms, contact us at support@shaanacademy.com.
+              For questions about these Terms, contact us at support@learnpathshala.com.
             </p>
           </div>
         </div>

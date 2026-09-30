@@ -53,7 +53,7 @@ export default function RefundCancellationPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-900">3. How to Request a Refund</h2>
             <p className="mt-3 text-slate-600">
-              To request a refund, please contact us at support@shaanacademy.com with your account email, course name, and reason for the refund request. Refunds are processed within 7-10 business days to the original payment method.
+              To request a refund, please contact us at support@learnpathshala.com with your account email, course name, and reason for the refund request. Refunds are processed within 7-10 business days to the original payment method.
             </p>
           </div>
 
@@ -98,7 +98,7 @@ export default function RefundCancellationPage() {
           <div>
             <h2 className="text-xl font-semibold text-slate-900">9. Contact</h2>
             <p className="mt-3 text-slate-600">
-              For refund-related questions, please reach out to support@shaanacademy.com or call +91 98765 43210.
+              For refund-related questions, please reach out to support@learnpathshala.com or call +91 98765 43210.
             </p>
           </div>
         </div>

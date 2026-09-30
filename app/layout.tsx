@@ -7,7 +7,7 @@ import { Toaster } from '@/components/ui/sonner';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'ShaanAcademy - Learn. Teach. Excel.',
+  title: 'learnpathshala - Learn. Teach. Excel.',
   description: 'A modern learning platform with live classes, interactive quizzes, and role-based dashboards for admins, teachers, and students.',
 };
 

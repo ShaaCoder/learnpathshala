@@ -40,7 +40,7 @@ export default function ContactPage() {
               <GraduationCap className="h-6 w-6 text-white" />
             </div>
             <span className="text-xl font-bold tracking-tight text-slate-900">
-              Shaan<span className="text-sky-500">Academy</span>
+              Learn<span className="text-sky-500">PathShala</span>
             </span>
           </Link>
           <div className="hidden items-center gap-8 md:flex">
@@ -77,7 +77,7 @@ export default function ContactPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-slate-900">Email</h3>
-                  <p className="mt-1 text-sm text-slate-500">support@shaanacademy.com</p>
+                  <p className="mt-1 text-sm text-slate-500">support@learnpathshala.com</p>
                 </div>
               </div>
               <div className="flex items-start gap-4">
@@ -96,7 +96,7 @@ export default function ContactPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold text-slate-900">Address</h3>
-                  <p className="mt-1 text-sm text-slate-500">ShaanAcademy, New Delhi, India 110001</p>
+                  <p className="mt-1 text-sm text-slate-500">learnpathshala, New Delhi, India 110001</p>
                 </div>
               </div>
             </div>

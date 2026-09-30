@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft, Check, ClipboardCheck, Edit3, Loader2, Plus, Send,
-  Trash2, X,
+  ArrowLeft, Check, ClipboardCheck, Loader2, Plus, Send,
+  Trash2, Upload, Video,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +38,7 @@ type Question = {
   options: string[];
   explanation: string | null;
   points: number;
+  solution_video_url: string | null;
   correct_answer?: number;
 };
 
@@ -50,6 +51,26 @@ const statusStyles: Record<string, string> = {
   unpublished: 'bg-slate-200 text-slate-700',
 };
 
+/*
+ * Supabase Storage bucket used for teacher solution videos.
+ *
+ * Create this bucket in Supabase Storage:
+ *   mock-test-solutions
+ *
+ * Make the bucket PUBLIC because the student test page
+ * plays the saved public URL directly in <video>.
+ */
+const SOLUTION_VIDEO_BUCKET = 'mock-test-solutions';
+
+const MAX_VIDEO_SIZE = 100 * 1024 * 1024; // 100 MB
+
+const ALLOWED_VIDEO_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/ogg',
+  'video/quicktime',
+];
+
 export default function TeacherMockTestsPage() {
   const { user, profile, loading } = useAuth();
   const router = useRouter();
@@ -59,8 +80,25 @@ export default function TeacherMockTestsPage() {
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [questionDialogOpen, setQuestionDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [testForm, setTestForm] = useState({ title: '', description: '', exam_name: 'General', category: 'General', time_limit_minutes: '30', attempt_limit: '1' });
-  const [questionForm, setQuestionForm] = useState({ question_text: '', options: ['', '', '', ''], correct_answer: '0', explanation: '', points: '1' });
+  const [videoUploading, setVideoUploading] = useState(false);
+
+  const [testForm, setTestForm] = useState({
+    title: '',
+    description: '',
+    exam_name: 'General',
+    category: 'General',
+    time_limit_minutes: '30',
+    attempt_limit: '1',
+  });
+
+  const [questionForm, setQuestionForm] = useState({
+    question_text: '',
+    options: ['', '', '', ''],
+    correct_answer: '0',
+    explanation: '',
+    points: '1',
+    solution_video_url: '',
+  });
 
   useEffect(() => {
     if (!loading && (!user || profile?.role !== 'teacher')) router.push('/login');
@@ -84,7 +122,7 @@ export default function TeacherMockTestsPage() {
     setSelectedTest(test);
     const { data: qData } = await supabase
       .from('mock_test_questions')
-      .select('id, question_order, question_text, options, explanation, points')
+      .select('id, question_order, question_text, options, explanation, points, solution_video_url')
       .eq('test_id', test.id)
       .order('question_order');
     const questionList = (qData || []) as Question[];
@@ -130,23 +168,264 @@ export default function TeacherMockTestsPage() {
     toast.success('Test deleted.'); setSelectedTest(null); fetchTests();
   };
 
+
+  /*
+   * Upload a solution video to Supabase Storage.
+   */
+  const uploadSolutionVideo = async (
+    file: File
+  ): Promise<string | null> => {
+    if (!user) {
+      toast.error('You must be logged in as a teacher.');
+      return null;
+    }
+
+    if (!ALLOWED_VIDEO_TYPES.includes(file.type)) {
+      toast.error(
+        'Please upload an MP4, WebM, OGG, or MOV video.'
+      );
+      return null;
+    }
+
+    if (file.size > MAX_VIDEO_SIZE) {
+      toast.error(
+        'Video must be smaller than 100 MB.'
+      );
+      return null;
+    }
+
+    if (!selectedTest) {
+      toast.error('Select a test first.');
+      return null;
+    }
+
+    setVideoUploading(true);
+
+    try {
+      const safeName =
+        file.name
+          .replace(/[^a-zA-Z0-9._-]/g, '-')
+          .replace(/-+/g, '-');
+
+      const filePath =
+        `${user.id}/${selectedTest.id}/${crypto.randomUUID()}-${safeName || 'solution-video.mp4'}`;
+
+      const {
+        error: uploadError,
+      } = await supabase.storage
+        .from(SOLUTION_VIDEO_BUCKET)
+        .upload(
+          filePath,
+          file,
+          {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: file.type,
+          }
+        );
+
+      if (uploadError) {
+        console.error(
+          'Solution video upload error:',
+          uploadError
+        );
+
+        toast.error(
+          uploadError.message ||
+            'Could not upload the solution video.'
+        );
+
+        return null;
+      }
+
+      const {
+        data: publicData,
+      } = supabase.storage
+        .from(SOLUTION_VIDEO_BUCKET)
+        .getPublicUrl(filePath);
+
+      if (!publicData.publicUrl) {
+        toast.error(
+          'Video uploaded, but its URL could not be created.'
+        );
+        return null;
+      }
+
+      return publicData.publicUrl;
+    } catch (error) {
+      console.error(
+        'Solution video upload exception:',
+        error
+      );
+
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Could not upload the solution video.'
+      );
+
+      return null;
+    } finally {
+      setVideoUploading(false);
+    }
+  };
+
+  const handleVideoChange = async (
+    file: File | undefined
+  ) => {
+    if (!file) return;
+
+    const url =
+      await uploadSolutionVideo(file);
+
+    if (url) {
+      setQuestionForm((prev) => ({
+        ...prev,
+        solution_video_url: url,
+      }));
+
+      toast.success(
+        'Solution video uploaded successfully.'
+      );
+    }
+  };
+
   const addQuestion = async () => {
-    if (!selectedTest || !questionForm.question_text.trim()) { toast.error('Add question text first.'); return; }
-    const options = questionForm.options.map((o) => o.trim()).filter(Boolean);
-    const correctAnswer = Number(questionForm.correct_answer);
-    if (options.length < 2 || correctAnswer >= options.length) { toast.error('Add at least two options and choose a valid answer.'); return; }
-    const nextOrder = questions.length ? Math.max(...questions.map((q) => q.question_order)) + 1 : 1;
-    const { data: question, error } = await supabase.from('mock_test_questions').insert({
-      test_id: selectedTest.id, question_order: nextOrder, question_text: questionForm.question_text.trim(),
-      options, explanation: questionForm.explanation.trim() || null, points: Math.max(1, Number(questionForm.points)),
-    }).select('id').maybeSingle();
-    if (error || !question) { toast.error('Could not add this question.'); return; }
-    const keyResult = await supabase.from('mock_test_answer_keys').insert({ question_id: question.id, correct_answer: correctAnswer });
-    if (keyResult.error) { toast.error('Question was created but its answer key could not be saved.'); return; }
-    toast.success('Question added.');
-    setQuestionDialogOpen(false);
-    setQuestionForm({ question_text: '', options: ['', '', '', ''], correct_answer: '0', explanation: '', points: '1' });
-    loadQuestions(selectedTest);
+    if (
+      !selectedTest ||
+      !questionForm.question_text.trim()
+    ) {
+      toast.error('Add question text first.');
+      return;
+    }
+
+    const options =
+      questionForm.options
+        .map((o) => o.trim())
+        .filter(Boolean);
+
+    const correctAnswer =
+      Number(questionForm.correct_answer);
+
+    if (
+      options.length < 2 ||
+      correctAnswer < 0 ||
+      correctAnswer >= options.length
+    ) {
+      toast.error(
+        'Add at least two options and choose a valid answer.'
+      );
+      return;
+    }
+
+    const points =
+      Math.max(
+        1,
+        Number(questionForm.points)
+      );
+
+    if (!Number.isFinite(points)) {
+      toast.error('Enter valid points.');
+      return;
+    }
+
+    setBusy(true);
+
+    try {
+      const nextOrder =
+        questions.length
+          ? Math.max(
+              ...questions.map(
+                (q) => q.question_order
+              )
+            ) + 1
+          : 1;
+
+      const {
+        data: question,
+        error,
+      } = await supabase
+        .from('mock_test_questions')
+        .insert({
+          test_id: selectedTest.id,
+          question_order: nextOrder,
+          question_text:
+            questionForm.question_text.trim(),
+          options,
+          explanation:
+            questionForm.explanation.trim() ||
+            null,
+          points,
+          solution_video_url:
+            questionForm.solution_video_url ||
+            null,
+        })
+        .select('id')
+        .maybeSingle();
+
+      if (error || !question) {
+        console.error(
+          'Question insert error:',
+          error
+        );
+
+        toast.error(
+          error?.message ||
+            'Could not add this question.'
+        );
+
+        return;
+      }
+
+      const keyResult =
+        await supabase
+          .from('mock_test_answer_keys')
+          .insert({
+            question_id: question.id,
+            correct_answer: correctAnswer,
+          });
+
+      if (keyResult.error) {
+        console.error(
+          'Answer key error:',
+          keyResult.error
+        );
+
+        await supabase
+          .from('mock_test_questions')
+          .delete()
+          .eq('id', question.id);
+
+        toast.error(
+          'Question was created but its answer key could not be saved.'
+        );
+
+        return;
+      }
+
+      toast.success(
+        questionForm.solution_video_url
+          ? 'Question and solution video added.'
+          : 'Question added.'
+      );
+
+      setQuestionDialogOpen(false);
+
+      setQuestionForm({
+        question_text: '',
+        options: ['', '', '', ''],
+        correct_answer: '0',
+        explanation: '',
+        points: '1',
+        solution_video_url: '',
+      });
+
+      await loadQuestions(
+        selectedTest
+      );
+    } finally {
+      setBusy(false);
+    }
   };
 
   const deleteQuestion = async (question: Question) => {
@@ -208,7 +487,32 @@ export default function TeacherMockTestsPage() {
                           </div>
                         ))}
                       </div>
-                      {question.explanation && <p className="mt-2 ml-8 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">Explanation: {question.explanation}</p>}
+                      {question.explanation && (
+                        <p className="mt-2 ml-8 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
+                          Explanation: {question.explanation}
+                        </p>
+                      )}
+
+                      {question.solution_video_url && (
+                        <div className="mt-3 ml-8 overflow-hidden rounded-lg border border-slate-200">
+                          <div className="flex items-center gap-2 bg-slate-50 px-3 py-2">
+                            <Video className="h-4 w-4 text-sky-500" />
+                            <span className="text-xs font-semibold text-slate-700">
+                              Solution Video
+                            </span>
+                          </div>
+
+                          <video
+                            src={question.solution_video_url}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            className="max-h-64 w-full bg-black"
+                          >
+                            Your browser does not support video playback.
+                          </video>
+                        </div>
+                      )}
                     </div>
                     {(selectedTest.status === 'draft' || selectedTest.status === 'rejected') && <Button size="icon" variant="ghost" onClick={() => deleteQuestion(question)} className="text-slate-400 hover:text-red-500"><Trash2 className="h-4 w-4" /></Button>}
                   </div>
@@ -261,18 +565,237 @@ export default function TeacherMockTestsPage() {
       <Dialog open={questionDialogOpen} onOpenChange={setQuestionDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add Question</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2"><Label>Question</Label><Textarea value={questionForm.question_text} onChange={(e) => setQuestionForm({ ...questionForm, question_text: e.target.value })} placeholder="What is the capital of France?" /></div>
-            <div className="space-y-2"><Label>Options — select the correct answer</Label>{questionForm.options.map((option, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <input type="radio" name="teacher-correct" checked={questionForm.correct_answer === String(index)} onChange={() => setQuestionForm({ ...questionForm, correct_answer: String(index) })} className="h-4 w-4 accent-emerald-500" />
-                <Input value={option} onChange={(e) => { const options = [...questionForm.options]; options[index] = e.target.value; setQuestionForm({ ...questionForm, options }); }} placeholder={`Option ${index + 1}`} />
+          <div className="space-y-5 py-4">
+            <div className="space-y-2">
+              <Label>Question</Label>
+
+              <Textarea
+                value={questionForm.question_text}
+                onChange={(e) =>
+                  setQuestionForm({
+                    ...questionForm,
+                    question_text:
+                      e.target.value,
+                  })
+                }
+                placeholder="What is the capital of France?"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>
+                Options — select the correct answer
+              </Label>
+
+              {questionForm.options.map(
+                (option, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center gap-2"
+                  >
+                    <input
+                      type="radio"
+                      name="teacher-correct"
+                      checked={
+                        questionForm.correct_answer ===
+                        String(index)
+                      }
+                      onChange={() =>
+                        setQuestionForm({
+                          ...questionForm,
+                          correct_answer:
+                            String(index),
+                        })
+                      }
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+
+                    <Input
+                      value={option}
+                      onChange={(e) => {
+                        const options = [
+                          ...questionForm.options,
+                        ];
+
+                        options[index] =
+                          e.target.value;
+
+                        setQuestionForm({
+                          ...questionForm,
+                          options,
+                        });
+                      }}
+                      placeholder={`Option ${index + 1}`}
+                    />
+                  </div>
+                )
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Explanation</Label>
+
+              <Textarea
+                value={
+                  questionForm.explanation
+                }
+                onChange={(e) =>
+                  setQuestionForm({
+                    ...questionForm,
+                    explanation:
+                      e.target.value,
+                  })
+                }
+                placeholder="Explain why the answer is correct..."
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Solution Video</Label>
+
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Video className="h-5 w-5 text-sky-500" />
+
+                      <p className="font-medium text-slate-900">
+                        Teacher's video solution
+                      </p>
+                    </div>
+
+                    <p className="mt-1 text-xs text-slate-500">
+                      MP4, WebM, OGG or MOV · Maximum 100 MB
+                    </p>
+                  </div>
+
+                  <label className="inline-flex cursor-pointer items-center justify-center rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-600">
+                    {videoUploading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="mr-2 h-4 w-4" />
+                        Choose Video
+                      </>
+                    )}
+
+                    <input
+                      type="file"
+                      accept="video/mp4,video/webm,video/ogg,video/quicktime"
+                      className="hidden"
+                      disabled={
+                        videoUploading ||
+                        busy
+                      }
+                      onChange={async (e) => {
+                        const file =
+                          e.target.files?.[0];
+
+                        await handleVideoChange(
+                          file
+                        );
+
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {questionForm.solution_video_url && (
+                  <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-black">
+                    <video
+                      src={
+                        questionForm.solution_video_url
+                      }
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="max-h-64 w-full"
+                    >
+                      Your browser does not support video playback.
+                    </video>
+
+                    <div className="flex items-center justify-between bg-white px-3 py-2">
+                      <div className="flex items-center gap-2 text-xs text-emerald-700">
+                        <Check className="h-4 w-4" />
+                        Video uploaded
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setQuestionForm({
+                            ...questionForm,
+                            solution_video_url:
+                              '',
+                          })
+                        }
+                        className="text-xs font-medium text-red-500 hover:text-red-600"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-            ))}</div>
-            <div className="space-y-2"><Label>Explanation</Label><Textarea value={questionForm.explanation} onChange={(e) => setQuestionForm({ ...questionForm, explanation: e.target.value })} placeholder="Explain why the answer is correct..." /></div>
-            <div className="space-y-2"><Label>Points</Label><Input type="number" min="1" value={questionForm.points} onChange={(e) => setQuestionForm({ ...questionForm, points: e.target.value })} /></div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Points</Label>
+
+              <Input
+                type="number"
+                min="1"
+                value={
+                  questionForm.points
+                }
+                onChange={(e) =>
+                  setQuestionForm({
+                    ...questionForm,
+                    points:
+                      e.target.value,
+                  })
+                }
+              />
+            </div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setQuestionDialogOpen(false)}>Cancel</Button><Button onClick={addQuestion} className="bg-emerald-500 text-white hover:bg-emerald-600">Add question</Button></DialogFooter>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() =>
+                setQuestionDialogOpen(
+                  false
+                )
+              }
+              disabled={
+                busy ||
+                videoUploading
+              }
+            >
+              Cancel
+            </Button>
+
+            <Button
+              onClick={addQuestion}
+              disabled={
+                busy ||
+                videoUploading
+              }
+              className="bg-emerald-500 text-white hover:bg-emerald-600"
+            >
+              {busy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="mr-2 h-4 w-4" />
+              )}
+
+              Add question
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </DashboardShell>

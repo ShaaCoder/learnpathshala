@@ -1,8 +1,8 @@
 /*
-# ShaanAcademy - Full Schema
+# learnpathshala - Full Schema
 
 ## Overview
-Creates the complete database schema for ShaanAcademy, an educational platform with three roles: admin, teacher, and student. Features courses, live classes, and quizzes.
+Creates the complete database schema for learnpathshala, an educational platform with three roles: admin, teacher, and student. Features courses, live classes, and quizzes.
 
 ## New Tables
 1. **profiles** - Extends auth.users with role (admin/teacher/student), full_name, avatar_url

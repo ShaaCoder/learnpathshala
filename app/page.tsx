@@ -25,7 +25,7 @@ export default function Home() {
               <GraduationCap className="h-6 w-6 text-white" />
             </div>
             <span className="text-xl font-bold tracking-tight text-slate-900">
-              Shaan<span className="text-sky-500">Academy</span>
+              Learn<span className="text-sky-500">PathShala</span>
             </span>
           </Link>
 
